@@ -1,5 +1,13 @@
 import React from 'react';
-import { Calendar, ChevronDown, FileSpreadsheet, Menu, TrendingUp } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  Calendar,
+  ChevronDown,
+  FileSpreadsheet,
+  Menu,
+  RefreshCw,
+  TrendingUp,
+} from 'lucide-react';
 import { QuarterId } from '../types/budget';
 import { QUARTER_OPTIONS } from '../data/sipanggarData';
 import { PimpinanAvatar } from './BrandAssets';
@@ -15,6 +23,8 @@ interface TopBarProps {
   onOpenSheetsModal: () => void;
   connectedSheetTitle: string | null;
   activeSourceLabel: string;
+  autoSyncEnabled?: boolean;
+  isSyncingNow?: boolean;
   perangkatDaerahSubtitle?: string;
 }
 
@@ -32,6 +42,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenSheetsModal,
   connectedSheetTitle,
   activeSourceLabel,
+  autoSyncEnabled,
+  isSyncingNow,
   perangkatDaerahSubtitle,
 }) => {
   const spreadsheetDisplay = connectedSheetTitle || activeSourceLabel;
@@ -70,14 +82,20 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Right Interactive Selectors: Spreadsheet, Tahun Anggaran, Periode, User Role */}
       <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-        {/* Google Sheets / Spreadsheet Sync Trigger */}
+        {/* Google Sheets / 2-Way Spreadsheet Sync Trigger */}
         <button
           type="button"
           onClick={onOpenSheetsModal}
           className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
-          title={`Sumber data spreadsheet aktif: ${spreadsheetDisplay}`}
+          title={`Sumber data 2 arah aktif: ${spreadsheetDisplay}`}
         >
-          <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+          {isSyncingNow ? (
+            <RefreshCw className="w-4 h-4 text-emerald-600 shrink-0 animate-spin" />
+          ) : autoSyncEnabled ? (
+            <ArrowLeftRight className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+          )}
           <span className="text-[13px] font-bold max-w-[175px] truncate">
             {spreadsheetDisplay}
           </span>

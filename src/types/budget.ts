@@ -1,6 +1,7 @@
 export type NavSection =
   | 'dashboard'
   | 'data-anggaran'
+  | 'spreadsheet'
   | 'monitoring'
   | 'peringatan'
   | 'laporan'

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   FISCAL_YEAR_DATASETS,
@@ -26,18 +26,24 @@ import {
   PeringatanRealisasiView,
   RiwayatPembaruanView,
 } from './components/SubPages';
+import { SpreadsheetView } from './components/SpreadsheetView';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 import { googleSignIn, initAuth, logout } from './services/googleAuth';
-import { SpreadsheetMetadata } from './services/googleSheets';
+import {
+  readSubkegiatanFromSheet,
+  SpreadsheetMetadata,
+  syncSubkegiatanToSheet,
+} from './services/googleSheets';
 import {
   isSpjFungsionalFormat,
   parseCsvMatrix,
   ParsedSpjDocument,
-  parseIndonesianMoney,
   parseSpjFungsionalMatrix,
 } from './services/spjParser';
 
 const DEFAULT_DATABASE_CSV_URL = '/assets/aistudio/Database_SIPANGGAR_9d822400';
+const LIVE_ROWS_STORAGE_KEY = 'sipanggar_live_rows_v1';
+const GSHEET_LINK_STORAGE_KEY = 'sipanggar_gsheet_link_v1';
 
 const PROGRAM_COLORS: Record<Exclude<ProgramCategory, 'Semua Program'>, string> = {
   'Pelayanan Umum': '#0E76F4',
@@ -46,19 +52,20 @@ const PROGRAM_COLORS: Record<Exclude<ProgramCategory, 'Semua Program'>, string> 
   Penunjang: '#7C3AED',
 };
 
-const normalizeFlatProgram = (raw: string): Exclude<ProgramCategory, 'Semua Program'> => {
-  const lower = raw.toLowerCase();
-  if (lower.includes('pelayanan') || lower.includes('pemerintahan') || lower.includes('koordinasi')) {
-    return 'Pelayanan Umum';
-  }
-  if (lower.includes('ekonomi') || lower.includes('penelitian') || lower.includes('umkm')) {
-    return 'Perekonomian';
-  }
-  if (lower.includes('penunjang') || lower.includes('sekretariat')) {
-    return 'Penunjang';
-  }
-  return 'Pembangunan';
-};
+const serializeRowsSignature = (rows: SubkegiatanItem[]): string =>
+  rows
+    .map(
+      (r) =>
+        `${r.kode}|${r.program}|${r.kegiatan}|${r.nama}|${r.triwulan}|${r.pagu}|${r.realisasi}|${r.tindakLanjut || ''}`
+    )
+    .join('\n');
+
+const formatNowTime = () =>
+  new Date().toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
 export default function App() {
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
@@ -75,59 +82,151 @@ export default function App() {
   const [dataStatusFilter, setDataStatusFilter] = useState<RealizationStatus | 'Semua'>('Semua');
   const [realisasiDelta, setRealisasiDelta] = useState<number>(0);
 
-  // Google Sheets OAuth & Sync State
+  // Google Sheets OAuth & 2-Way Sync State (metadata only in localStorage, tokens strictly in memory)
   const [sheetsModalOpen, setSheetsModalOpen] = useState<boolean>(false);
   const [needsAuth, setNeedsAuth] = useState<boolean>(true);
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
-  const [connectedSheet, setConnectedSheet] = useState<SpreadsheetMetadata | null>(null);
-  const [selectedSheetTab, setSelectedSheetTab] = useState<string>('');
+  const [connectedSheet, setConnectedSheet] = useState<SpreadsheetMetadata | null>(() => {
+    try {
+      const saved = localStorage.getItem(GSHEET_LINK_STORAGE_KEY);
+      if (saved) return JSON.parse(saved).meta || null;
+    } catch {
+      // ignore storage errors
+    }
+    return null;
+  });
+  const [selectedSheetTab, setSelectedSheetTab] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(GSHEET_LINK_STORAGE_KEY);
+      if (saved) return JSON.parse(saved).tab || '';
+    } catch {
+      // ignore
+    }
+    return '';
+  });
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(GSHEET_LINK_STORAGE_KEY);
+      if (saved) return Boolean(JSON.parse(saved).autoSyncEnabled);
+    } catch {
+      // ignore
+    }
+    return false;
+  });
+  const [isSyncingNow, setIsSyncingNow] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [isSpreadsheetMode, setIsSpreadsheetMode] = useState<boolean>(false);
 
-  const applySpjDocument = useCallback((spjDoc: ParsedSpjDocument, sourceLabel: string) => {
-    setActiveSpjDoc(spjDoc);
-    setSubkegiatanList(spjDoc.subkegiatanList);
-    setIsSpreadsheetMode(true);
-    setActiveSourceLabel(sourceLabel);
-    setSelectedYear(spjDoc.metadata.tahunAnggaran || 2026);
-    setRealisasiDelta(0);
+  const isDirtyForRemoteRef = useRef<boolean>(false);
+  const lastRemoteSignatureRef = useRef<string>('');
+
+  const persistLiveRows = useCallback((rows: SubkegiatanItem[]) => {
+    try {
+      localStorage.setItem(LIVE_ROWS_STORAGE_KEY, JSON.stringify(rows));
+    } catch {
+      // ignore quota errors
+    }
   }, []);
 
-  const loadDefaultDatabaseSpreadsheet = useCallback(async () => {
-    const response = await fetch(DEFAULT_DATABASE_CSV_URL);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} saat memuat Database SIPANGGAR`);
+  useEffect(() => {
+    try {
+      if (connectedSheet) {
+        localStorage.setItem(
+          GSHEET_LINK_STORAGE_KEY,
+          JSON.stringify({
+            meta: connectedSheet,
+            tab: selectedSheetTab,
+            autoSyncEnabled,
+          })
+        );
+      } else {
+        localStorage.removeItem(GSHEET_LINK_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
     }
-    const csvText = await response.text();
-    const matrix = parseCsvMatrix(csvText);
-    if (!isSpjFungsionalFormat(matrix)) {
-      throw new Error('Format Database SIPANGGAR tidak dikenali sebagai SPJ Fungsional.');
-    }
-    const spjDoc = parseSpjFungsionalMatrix(matrix);
-    applySpjDocument(spjDoc, 'Database SIPANGGAR');
-    setConnectedSheet(null);
-    setSelectedSheetTab('');
-    setAuditLogs((prev) => [
-      {
-        id: `log-init-spj-${Date.now()}`,
-        tanggal: '13 Des 2026',
-        waktu: '08:00 WITA',
-        pengguna: spjDoc.metadata.bendaharaPengeluaran,
-        jabatan: 'Bendahara Pengeluaran',
-        aksi: 'Verifikasi Triwulan',
-        keterangan: `Terhubung ke spreadsheet Database SIPANGGAR (${spjDoc.kegiatanList.length} Kegiatan, ${spjDoc.subkegiatanList.length} Subkegiatan · ${spjDoc.metadata.perangkatDaerah}).`,
-        nominal: spjDoc.totalRealisasi,
-      },
-      ...prev.filter((l) => !l.id.startsWith('log-init-spj-')),
-    ]);
-  }, [applySpjDocument]);
+  }, [connectedSheet, selectedSheetTab, autoSyncEnabled]);
+
+  const applySpjDocument = useCallback(
+    (spjDoc: ParsedSpjDocument, sourceLabel: string, persistRows = true) => {
+      setActiveSpjDoc(spjDoc);
+      setSubkegiatanList(spjDoc.subkegiatanList);
+      setIsSpreadsheetMode(true);
+      setActiveSourceLabel(sourceLabel);
+      setSelectedYear(spjDoc.metadata.tahunAnggaran || 2026);
+      setRealisasiDelta(0);
+      if (persistRows) {
+        persistLiveRows(spjDoc.subkegiatanList);
+      }
+    },
+    [persistLiveRows]
+  );
+
+  const loadDefaultDatabaseSpreadsheet = useCallback(
+    async (clearSavedEdits = true) => {
+      const response = await fetch(DEFAULT_DATABASE_CSV_URL);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} saat memuat Database SIPANGGAR`);
+      }
+      const csvText = await response.text();
+      const matrix = parseCsvMatrix(csvText);
+      if (!isSpjFungsionalFormat(matrix)) {
+        throw new Error('Format Database SIPANGGAR tidak dikenali sebagai SPJ Fungsional.');
+      }
+      const spjDoc = parseSpjFungsionalMatrix(matrix);
+      if (clearSavedEdits) {
+        try {
+          localStorage.removeItem(LIVE_ROWS_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        applySpjDocument(spjDoc, 'Database SIPANGGAR', true);
+      } else {
+        setActiveSpjDoc(spjDoc);
+      }
+      isDirtyForRemoteRef.current = Boolean(autoSyncEnabled);
+      setAuditLogs((prev) => [
+        {
+          id: `log-init-spj-${Date.now()}`,
+          tanggal: '13 Des 2026',
+          waktu: '08:00 WITA',
+          pengguna: spjDoc.metadata.bendaharaPengeluaran,
+          jabatan: 'Bendahara Pengeluaran',
+          aksi: 'Verifikasi Triwulan',
+          keterangan: `Terhubung 2 arah ke spreadsheet Database SIPANGGAR (${spjDoc.kegiatanList.length} Kegiatan, ${spjDoc.subkegiatanList.length} Subkegiatan · ${spjDoc.metadata.perangkatDaerah}).`,
+          nominal: spjDoc.totalRealisasi,
+        },
+        ...prev.filter((l) => !l.id.startsWith('log-init-spj-')),
+      ]);
+    },
+    [applySpjDocument, autoSyncEnabled]
+  );
 
   useEffect(() => {
-    loadDefaultDatabaseSpreadsheet().catch(() => {
+    let hasSavedRows = false;
+    try {
+      const saved = localStorage.getItem(LIVE_ROWS_STORAGE_KEY);
+      if (saved) {
+        const parsed: SubkegiatanItem[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          hasSavedRows = true;
+          setSubkegiatanList(parsed);
+          setIsSpreadsheetMode(true);
+          setActiveSourceLabel('Spreadsheet 2 Arah');
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+
+    loadDefaultDatabaseSpreadsheet(!hasSavedRows).catch(() => {
       // Fall back quietly to baseline dataset if static asset fails
     });
-  }, [loadDefaultDatabaseSpreadsheet]);
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -339,14 +438,29 @@ export default function App() {
     };
   }, [selectedYear, realisasiDelta, subkegiatanList, isSpreadsheetMode, activeSpjDoc]);
 
+  const handleSaveFollowUp = (subId: string, tindakLanjut: string) => {
+    let subName = '';
+    setSubkegiatanList((prev) => {
+      const next = prev.map((item) => {
+        if (item.id !== subId) return item;
+        subName = item.nama;
+        return { ...item, tindakLanjut };
+      });
+      persistLiveRows(next);
+      return next;
+    });
+    isDirtyForRemoteRef.current = true;
+    addAuditLog('Tindak Lanjut Peringatan', `Tindak lanjut "${subName}": ${tindakLanjut}`);
+  };
+
   const handleUpdateRealisasi = (
     subId: string,
     newRealisasi: number,
     keterangan: string
   ) => {
     let diff = 0;
-    setSubkegiatanList((prev) =>
-      prev.map((item) => {
+    setSubkegiatanList((prev) => {
+      const next = prev.map((item) => {
         if (item.id !== subId) return item;
         diff = newRealisasi - item.realisasi;
         const pct = item.pagu > 0 ? (newRealisasi / item.pagu) * 100 : 0;
@@ -358,27 +472,76 @@ export default function App() {
           persentase: pct,
           status: nextStatus,
         };
-      })
-    );
+      });
+      persistLiveRows(next);
+      return next;
+    });
 
     if (diff !== 0 && !isSpreadsheetMode) {
       setRealisasiDelta((d) => d + diff);
     }
 
+    isDirtyForRemoteRef.current = true;
     addAuditLog('Input Realisasi SP2D', keterangan, newRealisasi);
   };
 
-  const handleSaveFollowUp = (subId: string, tindakLanjut: string) => {
-    let subName = '';
-    setSubkegiatanList((prev) =>
-      prev.map((item) => {
+  const handleUpdateSpreadsheetRow = (subId: string, patch: Partial<SubkegiatanItem>) => {
+    setSubkegiatanList((prev) => {
+      const next = prev.map((item) => {
         if (item.id !== subId) return item;
-        subName = item.nama;
-        return { ...item, tindakLanjut };
-      })
-    );
+        const updated: SubkegiatanItem = { ...item, ...patch };
+        const pagu = Math.max(0, updated.pagu);
+        const realisasi = Math.max(0, updated.realisasi);
+        const pct = pagu > 0 ? (realisasi / pagu) * 100 : 0;
+        const status: RealizationStatus =
+          realisasi === 0 ? 'Belum Terealisasi' : pct < 70 ? 'Perlu Perhatian' : 'Baik';
+        return {
+          ...updated,
+          pagu,
+          realisasi,
+          persentase: pct,
+          status,
+        };
+      });
+      persistLiveRows(next);
+      return next;
+    });
+    setIsSpreadsheetMode(true);
+    isDirtyForRemoteRef.current = true;
+  };
 
-    addAuditLog('Tindak Lanjut Peringatan', `Tindak lanjut "${subName}": ${tindakLanjut}`);
+  const handleAddSpreadsheetRow = () => {
+    const newRow: SubkegiatanItem = {
+      id: `live-row-${Date.now()}`,
+      kode: `5.01.01.2.01.${String(subkegiatanList.length + 1).padStart(4, '0')}`,
+      program: 'Pembangunan',
+      kegiatan: 'Kegiatan Perencanaan Pembangunan Daerah',
+      nama: 'Subkegiatan Baru',
+      triwulan: 'IV',
+      pagu: 0,
+      realisasi: 0,
+      persentase: 0,
+      status: 'Belum Terealisasi',
+      unitPelaksana: activeSpjDoc?.metadata.perangkatDaerah || 'Bapperida Kab. Nagekeo',
+      tindakLanjut: '',
+    };
+    setSubkegiatanList((prev) => {
+      const next = [newRow, ...prev];
+      persistLiveRows(next);
+      return next;
+    });
+    setIsSpreadsheetMode(true);
+    isDirtyForRemoteRef.current = true;
+    addAuditLog('Verifikasi Triwulan', 'Menambahkan baris subkegiatan baru pada Spreadsheet 2 Arah.');
+  };
+
+  const handleDeleteSpreadsheetRow = (subId: string) => {
+    setSubkegiatanList((prev) => {
+      const next = prev.filter((r) => r.id !== subId);
+      persistLiveRows(next);
+      return next;
+    });
+    isDirtyForRemoteRef.current = true;
   };
 
   const handleImportRowsFromSheet = (
@@ -388,123 +551,135 @@ export default function App() {
     spjDoc?: ParsedSpjDocument
   ) => {
     if (spjDoc) {
-      applySpjDocument(spjDoc, meta.title);
+      applySpjDocument(spjDoc, meta.title, true);
+      lastRemoteSignatureRef.current = serializeRowsSignature(spjDoc.subkegiatanList);
     } else {
       setActiveSpjDoc(null);
       setSubkegiatanList(rows);
+      persistLiveRows(rows);
+      lastRemoteSignatureRef.current = serializeRowsSignature(rows);
       setIsSpreadsheetMode(true);
       setActiveSourceLabel(meta.title);
       setSelectedYear(2026);
     }
+    isDirtyForRemoteRef.current = false;
     setConnectedSheet(meta);
     setSelectedSheetTab(tab);
+    setLastSyncedAt(formatNowTime());
     addAuditLog(
       'Verifikasi Triwulan',
-      `Mengimpor ${rows.length} subkegiatan dari Google Sheets "${meta.title}" (tab "${tab}").`
+      `Menghubungkan & menyinkronkan ${rows.length} subkegiatan dari Google Sheets "${meta.title}" (tab "${tab}").`
     );
   };
 
-  const handleImportCsvFile = (
-    csvText: string,
-    fileName: string
-  ): { success: boolean; message: string } => {
-    const matrix = parseCsvMatrix(csvText);
-    if (matrix.length < 2) {
-      return { success: false, message: 'File CSV kosong atau tidak memiliki baris data.' };
-    }
+  // Auto-Push: Dashboard/Spreadsheet edits -> Google Sheets (debounced 900ms when 2-way autoSync is ON)
+  useEffect(() => {
+    if (!autoSyncEnabled || !accessToken || !connectedSheet || !selectedSheetTab) return;
+    if (!isDirtyForRemoteRef.current) return;
 
-    if (isSpjFungsionalFormat(matrix)) {
-      const spjDoc = parseSpjFungsionalMatrix(matrix);
-      if (spjDoc.subkegiatanList.length === 0) {
-        return {
-          success: false,
-          message: 'Format SPJ terdeteksi, tetapi tidak ada subkegiatan yang berhasil dibaca.',
-        };
+    const timer = window.setTimeout(async () => {
+      try {
+        setIsSyncingNow(true);
+        await syncSubkegiatanToSheet(
+          connectedSheet.spreadsheetId,
+          selectedSheetTab,
+          subkegiatanList,
+          accessToken
+        );
+        isDirtyForRemoteRef.current = false;
+        lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
+        setLastSyncedAt(formatNowTime());
+      } catch {
+        // Keep dirty flag so user can retry or re-authenticate
+      } finally {
+        setIsSyncingNow(false);
       }
-      applySpjDocument(spjDoc, fileName);
-      setConnectedSheet(null);
-      setSelectedSheetTab('');
-      addAuditLog(
-        'Verifikasi Triwulan',
-        `Mengimpor file spreadsheet SPJ "${fileName}" (${spjDoc.kegiatanList.length} Kegiatan, ${spjDoc.subkegiatanList.length} Subkegiatan).`,
-        spjDoc.totalRealisasi
-      );
-      return {
-        success: true,
-        message: `File SPJ "${fileName}" berhasil dimuat (${spjDoc.kegiatanList.length} Kegiatan, ${spjDoc.subkegiatanList.length} Subkegiatan).`,
-      };
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [subkegiatanList, autoSyncEnabled, accessToken, connectedSheet, selectedSheetTab]);
+
+  // Auto-Pull: Google Sheets edits -> Dashboard/Spreadsheet (every 15 seconds when 2-way autoSync is ON)
+  useEffect(() => {
+    if (!autoSyncEnabled || !accessToken || !connectedSheet || !selectedSheetTab) return;
+
+    const interval = window.setInterval(async () => {
+      if (isDirtyForRemoteRef.current || isSyncingNow) return;
+      try {
+        const { rows, spjDocument } = await readSubkegiatanFromSheet(
+          connectedSheet.spreadsheetId,
+          selectedSheetTab,
+          accessToken
+        );
+        if (rows.length === 0) return;
+        const remoteSig = serializeRowsSignature(rows);
+        if (remoteSig !== lastRemoteSignatureRef.current) {
+          lastRemoteSignatureRef.current = remoteSig;
+          if (spjDocument) {
+            setActiveSpjDoc(spjDocument);
+          }
+          setSubkegiatanList(rows);
+          persistLiveRows(rows);
+          setIsSpreadsheetMode(true);
+          setLastSyncedAt(formatNowTime());
+        }
+      } catch {
+        // Ignore transient background poll errors
+      }
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, [
+    autoSyncEnabled,
+    accessToken,
+    connectedSheet,
+    selectedSheetTab,
+    isSyncingNow,
+    persistLiveRows,
+  ]);
+
+  const handleManualTwoWaySync = useCallback(async () => {
+    if (!accessToken || !connectedSheet || !selectedSheetTab) return;
+    setIsSyncingNow(true);
+    try {
+      if (isDirtyForRemoteRef.current) {
+        await syncSubkegiatanToSheet(
+          connectedSheet.spreadsheetId,
+          selectedSheetTab,
+          subkegiatanList,
+          accessToken
+        );
+        isDirtyForRemoteRef.current = false;
+        lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
+      } else {
+        const { rows, spjDocument } = await readSubkegiatanFromSheet(
+          connectedSheet.spreadsheetId,
+          selectedSheetTab,
+          accessToken
+        );
+        if (rows.length > 0) {
+          lastRemoteSignatureRef.current = serializeRowsSignature(rows);
+          if (spjDocument) {
+            setActiveSpjDoc(spjDocument);
+          }
+          setSubkegiatanList(rows);
+          persistLiveRows(rows);
+          setIsSpreadsheetMode(true);
+        } else {
+          await syncSubkegiatanToSheet(
+            connectedSheet.spreadsheetId,
+            selectedSheetTab,
+            subkegiatanList,
+            accessToken
+          );
+          lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
+        }
+      }
+      setLastSyncedAt(formatNowTime());
+    } finally {
+      setIsSyncingNow(false);
     }
-
-    // Generic flat CSV fallback
-    const headers = matrix[0].map((h) => String(h || '').toLowerCase().trim());
-    const findCol = (keywords: string[], fallbackIdx: number) => {
-      const idx = headers.findIndex((h) => keywords.some((k) => h.includes(k)));
-      return idx >= 0 ? idx : fallbackIdx;
-    };
-
-    const colKode = findCol(['kode', 'rekening'], 0);
-    const colProg = findCol(['program'], 1);
-    const colKeg = findCol(['kegiatan'], 2);
-    const colNama = findCol(['subkegiatan', 'sub kegiatan', 'uraian', 'nama'], 3);
-    const colTw = findCol(['triwulan', 'tw', 'periode'], 4);
-    const colPagu = findCol(['pagu', 'anggaran'], 5);
-    const colReal = findCol(['realisasi', 'spj', 'serapan'], 6);
-    const colUnit = findCol(['unit', 'bidang', 'pelaksana'], 7);
-
-    const parsed: SubkegiatanItem[] = [];
-    for (let i = 1; i < matrix.length; i++) {
-      const r = matrix[i];
-      if (!r || r.every((c) => !String(c || '').trim())) continue;
-      const nama = String(r[colNama] || r[colKeg] || '').trim();
-      if (!nama) continue;
-      const pagu = parseIndonesianMoney(r[colPagu]);
-      const realisasi = parseIndonesianMoney(r[colReal]);
-      const pct = pagu > 0 ? Math.min(100, (realisasi / pagu) * 100) : 0;
-      const twRaw = String(r[colTw] || 'IV').toUpperCase();
-      const triwulan: 'I' | 'II' | 'III' | 'IV' = twRaw.includes('III') || twRaw === '3'
-        ? 'III'
-        : twRaw.includes('II') || twRaw === '2'
-        ? 'II'
-        : twRaw === 'I' || twRaw === '1'
-        ? 'I'
-        : 'IV';
-      parsed.push({
-        id: `csv-row-${i}`,
-        kode: String(r[colKode] || `5.01.00.0.${String(i).padStart(2, '0')}`).trim(),
-        program: normalizeFlatProgram(String(r[colProg] || '')),
-        kegiatan: String(r[colKeg] || 'Kegiatan Bapperida').trim(),
-        nama,
-        triwulan,
-        pagu,
-        realisasi,
-        persentase: pct,
-        status: realisasi === 0 ? 'Belum Terealisasi' : pct < 70 ? 'Perlu Perhatian' : 'Baik',
-        unitPelaksana: String(r[colUnit] || 'Bapperida Kab. Nagekeo').trim(),
-      });
-    }
-
-    if (parsed.length === 0) {
-      return {
-        success: false,
-        message: 'Tidak ada baris subkegiatan valid ditemukan pada file CSV tersebut.',
-      };
-    }
-
-    setActiveSpjDoc(null);
-    setSubkegiatanList(parsed);
-    setIsSpreadsheetMode(true);
-    setActiveSourceLabel(fileName);
-    setConnectedSheet(null);
-    setSelectedSheetTab('');
-    addAuditLog(
-      'Verifikasi Triwulan',
-      `Mengimpor ${parsed.length} subkegiatan dari file CSV "${fileName}".`
-    );
-    return {
-      success: true,
-      message: `Berhasil memuat ${parsed.length} subkegiatan dari "${fileName}".`,
-    };
-  };
+  }, [accessToken, connectedSheet, selectedSheetTab, subkegiatanList, persistLiveRows]);
 
   const handleFilterStatusClick = (status: RealizationStatus | 'Semua') => {
     setDataStatusFilter(status);
@@ -542,6 +717,8 @@ export default function App() {
           onOpenSheetsModal={() => setSheetsModalOpen(true)}
           connectedSheetTitle={connectedSheet?.title || null}
           activeSourceLabel={activeSourceLabel}
+          autoSyncEnabled={autoSyncEnabled}
+          isSyncingNow={isSyncingNow}
           perangkatDaerahSubtitle={
             activeSpjDoc
               ? `${activeSpjDoc.metadata.perangkatDaerah} · Pengguna Anggaran: ${activeSpjDoc.metadata.penggunaAnggaran}`
@@ -574,6 +751,24 @@ export default function App() {
             />
           )}
 
+          {activeSection === 'spreadsheet' && (
+            <SpreadsheetView
+              dataset={activeDataset}
+              subkegiatanList={subkegiatanList}
+              onUpdateRow={handleUpdateSpreadsheetRow}
+              onAddRow={handleAddSpreadsheetRow}
+              onDeleteRow={handleDeleteSpreadsheetRow}
+              onResetDefaultDatabase={() => loadDefaultDatabaseSpreadsheet(true)}
+              onOpenSheetsModal={() => setSheetsModalOpen(true)}
+              connectedSheet={connectedSheet}
+              selectedSheetTab={selectedSheetTab}
+              autoSyncEnabled={autoSyncEnabled}
+              isSyncingNow={isSyncingNow}
+              lastSyncedAt={lastSyncedAt}
+              onManualTwoWaySync={handleManualTwoWaySync}
+            />
+          )}
+
           {activeSection === 'monitoring' && (
             <MonitoringRealisasiView dataset={activeDataset} />
           )}
@@ -599,7 +794,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Google Sheets & Spreadsheet Integration Modal */}
+      {/* Google Sheets & 2-Way Spreadsheet Integration Modal */}
       <GoogleSheetsModal
         isOpen={sheetsModalOpen}
         onClose={() => setSheetsModalOpen(false)}
@@ -608,7 +803,10 @@ export default function App() {
         needsAuth={needsAuth}
         isLoggingIn={isLoggingIn}
         onGoogleLogin={handleGoogleLogin}
-        onGoogleLogout={handleGoogleLogout}
+        onGoogleLogout={() => {
+          setAutoSyncEnabled(false);
+          return handleGoogleLogout();
+        }}
         selectedYear={selectedYear}
         subkegiatanList={subkegiatanList}
         kegiatanList={activeDataset.kegiatanList}
@@ -616,13 +814,24 @@ export default function App() {
         selectedTab={selectedSheetTab}
         activeSourceLabel={activeSourceLabel}
         activeSpjMetadata={activeSpjDoc?.metadata || null}
+        autoSyncEnabled={autoSyncEnabled}
+        isSyncingNow={isSyncingNow}
+        lastSyncedAt={lastSyncedAt}
+        onToggleAutoSync={(enabled) => {
+          setAutoSyncEnabled(enabled);
+          if (enabled) {
+            lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
+            setLastSyncedAt(formatNowTime());
+          }
+        }}
+        onManualTwoWaySync={handleManualTwoWaySync}
+        onOpenInlineSpreadsheet={() => setActiveSection('spreadsheet')}
         onChangeConnectedSheet={(meta, tab) => {
           setConnectedSheet(meta);
           setSelectedSheetTab(tab);
         }}
         onImportRows={handleImportRowsFromSheet}
-        onImportCsvFile={handleImportCsvFile}
-        onResetDefaultDatabase={loadDefaultDatabaseSpreadsheet}
+        onResetDefaultDatabase={() => loadDefaultDatabaseSpreadsheet(true)}
         onAddAuditLog={(aksi, keterangan) => addAuditLog(aksi, keterangan)}
       />
     </div>

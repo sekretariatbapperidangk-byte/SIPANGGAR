@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   AlertTriangle,
+  ArrowLeftRight,
   CheckCircle2,
   Database,
   ExternalLink,
@@ -10,7 +11,6 @@ import {
   LogOut,
   PlusCircle,
   RefreshCw,
-  Upload,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -85,6 +85,12 @@ interface GoogleSheetsModalProps {
   selectedTab: string;
   activeSourceLabel: string;
   activeSpjMetadata?: ParsedSpjDocument['metadata'] | null;
+  autoSyncEnabled: boolean;
+  isSyncingNow: boolean;
+  lastSyncedAt: string | null;
+  onToggleAutoSync: (enabled: boolean) => void;
+  onManualTwoWaySync: () => Promise<void>;
+  onOpenInlineSpreadsheet: () => void;
   onChangeConnectedSheet: (meta: SpreadsheetMetadata | null, tab: string) => void;
   onImportRows: (
     rows: SubkegiatanItem[],
@@ -92,10 +98,6 @@ interface GoogleSheetsModalProps {
     tab: string,
     spjDoc?: ParsedSpjDocument
   ) => void;
-  onImportCsvFile: (
-    csvText: string,
-    fileName: string
-  ) => { success: boolean; message: string };
   onResetDefaultDatabase: () => Promise<void>;
   onAddAuditLog: (aksi: 'Input Realisasi SP2D' | 'Verifikasi Triwulan', keterangan: string) => void;
 }
@@ -116,9 +118,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   selectedTab,
   activeSourceLabel,
   activeSpjMetadata,
+  autoSyncEnabled,
+  isSyncingNow,
+  lastSyncedAt,
+  onToggleAutoSync,
+  onManualTwoWaySync,
+  onOpenInlineSpreadsheet,
   onChangeConnectedSheet,
   onImportRows,
-  onImportCsvFile,
   onResetDefaultDatabase,
   onAddAuditLog,
 }) => {
@@ -128,8 +135,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [previewRows, setPreviewRows] = useState<SubkegiatanItem[] | null>(null);
   const [previewSpjDoc, setPreviewSpjDoc] = useState<ParsedSpjDocument | undefined>(undefined);
-  const [confirmSyncOpen, setConfirmSyncOpen] = useState(false);
-  const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const [confirmMode, setConfirmMode] = useState<'push-once' | 'enable-auto' | null>(null);
 
   if (!isOpen) return null;
 
@@ -148,6 +154,24 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       const defaultTab = meta.sheets[0]?.title || '';
       onChangeConnectedSheet(meta, defaultTab);
       setUrlOrIdInput(meta.spreadsheetId);
+
+      // Immediately read rows from the selected tab so it connects cleanly without uploading files
+      if (defaultTab) {
+        const { rows, spjDocument } = await readSubkegiatanFromSheet(
+          meta.spreadsheetId,
+          defaultTab,
+          accessToken
+        );
+        if (rows.length > 0) {
+          setPreviewRows(rows);
+          setPreviewSpjDoc(spjDocument);
+          setSuccessMsg(
+            `Terhubung ke "${meta.title}" (${defaultTab}) — ditemukan ${rows.length} baris siap diterapkan.`
+          );
+          return;
+        }
+      }
+
       setSuccessMsg(
         `Terhubung ke "${meta.title}" (${meta.sheets.length} tab lembar kerja ditemukan).`
       );
@@ -171,7 +195,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       );
       if (rows.length === 0) {
         setErrorMsg(
-          `Tab "${selectedTab}" tidak memiliki baris data subkegiatan yang valid. Pastikan baris 1 berisi header SIPANGGAR atau format SPJ Belanja Fungsional SIPD.`
+          `Tab "${selectedTab}" masih kosong atau belum memakai kolom header SIPANGGAR. Anda dapat langsung menekan "Kirim Data ke Tab" untuk mengisi tab ini dari Dashboard.`
         );
         setPreviewRows(null);
         setPreviewSpjDoc(undefined);
@@ -180,8 +204,8 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         setPreviewSpjDoc(spjDocument);
         setSuccessMsg(
           spjDocument
-            ? `Terdeteksi format SPJ Belanja Fungsional (${spjDocument.kegiatanList.length} Kegiatan, ${rows.length} Subkegiatan). Klik "Terapkan ke Dashboard".`
-            : `Berhasil membaca ${rows.length} baris subkegiatan dari tab "${selectedTab}". Klik "Terapkan ke Dashboard" untuk memperbarui SIPANGGAR.`
+            ? `Terdeteksi format SPJ Belanja Fungsional (${spjDocument.kegiatanList.length} Kegiatan, ${rows.length} Subkegiatan). Klik "Terapkan & Hubungkan 2 Arah".`
+            : `Berhasil membaca ${rows.length} baris subkegiatan dari tab "${selectedTab}". Klik "Terapkan ke Dashboard".`
         );
       }
     } catch (err: any) {
@@ -195,30 +219,10 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     if (!previewRows || !connectedSheet) return;
     onImportRows(previewRows, connectedSheet, selectedTab, previewSpjDoc);
     setSuccessMsg(
-      `${previewRows.length} data subkegiatan dari "${connectedSheet.title}" (${selectedTab}) berhasil diterapkan ke dashboard.`
+      `${previewRows.length} data subkegiatan dari "${connectedSheet.title}" (${selectedTab}) telah diterapkan ke Dashboard & Spreadsheet 2 Arah.`
     );
     setPreviewRows(null);
     setPreviewSpjDoc(undefined);
-  };
-
-  const handleLocalCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    try {
-      const text = await file.text();
-      const result = onImportCsvFile(text, file.name);
-      if (result.success) {
-        setSuccessMsg(result.message);
-      } else {
-        setErrorMsg(result.message);
-      }
-    } catch {
-      setErrorMsg('Gagal membaca file CSV yang dipilih.');
-    } finally {
-      e.target.value = '';
-    }
   };
 
   const handleReloadDatabaseSipanggar = async () => {
@@ -227,7 +231,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     setLoadingAction('reload-default');
     try {
       await onResetDefaultDatabase();
-      setSuccessMsg('Berhasil memuat ulang spreadsheet bawaan "Database SIPANGGAR" (61 Subkegiatan).');
+      setSuccessMsg(
+        'Database SIPANGGAR bawaan (61 Subkegiatan) dimuat ulang ke Dashboard & Spreadsheet 2 Arah.'
+      );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Gagal memuat ulang Database SIPANGGAR.');
     } finally {
@@ -249,13 +255,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       );
       const firstTab = meta.sheets[0]?.title || 'Subkegiatan';
       onChangeConnectedSheet(meta, firstTab);
+      onToggleAutoSync(true);
       setUrlOrIdInput(meta.spreadsheetId);
       onAddAuditLog(
         'Verifikasi Triwulan',
-        `Membuat & menyinkronkan Google Spreadsheet baru "${meta.title}" (${subkegiatanList.length} subkegiatan).`
+        `Membuat Google Spreadsheet baru "${meta.title}" (${subkegiatanList.length} subkegiatan) dengan Sinkronisasi 2 Arah Otomatis aktif.`
       );
       setSuccessMsg(
-        `Spreadsheet "${meta.title}" berhasil dibuat dan diisi dengan ${subkegiatanList.length} subkegiatan dari sumber aktif!`
+        `Spreadsheet "${meta.title}" berhasil dibuat, diisi ${subkegiatanList.length} subkegiatan, dan Sinkronisasi 2 Arah Otomatis langsung aktif!`
       );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Gagal membuat Google Spreadsheet baru.');
@@ -264,9 +271,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     }
   };
 
-  const handleConfirmedSyncPush = async () => {
-    if (!accessToken || !connectedSheet || !selectedTab) return;
-    setConfirmSyncOpen(false);
+  const handleConfirmedWriteAction = async () => {
+    const mode = confirmMode;
+    setConfirmMode(null);
+    if (!accessToken || !connectedSheet || !selectedTab || !mode) return;
+
     setErrorMsg(null);
     setSuccessMsg(null);
     setLoadingAction('push-sync');
@@ -277,13 +286,24 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         subkegiatanList,
         accessToken
       );
-      onAddAuditLog(
-        'Input Realisasi SP2D',
-        `Sinkronisasi ${subkegiatanList.length} subkegiatan ke Google Sheets "${connectedSheet.title}" tab "${selectedTab}".`
-      );
-      setSuccessMsg(
-        `Berhasil menyinkronkan ${subkegiatanList.length} subkegiatan ke "${connectedSheet.title}" (${selectedTab}).`
-      );
+      if (mode === 'enable-auto') {
+        onToggleAutoSync(true);
+        onAddAuditLog(
+          'Verifikasi Triwulan',
+          `Mengaktifkan Sinkronisasi 2 Arah Otomatis ke Google Sheets "${connectedSheet.title}" tab "${selectedTab}".`
+        );
+        setSuccessMsg(
+          `Sinkronisasi 2 Arah Otomatis aktif untuk "${connectedSheet.title}" (${selectedTab})! Perubahan di Dashboard maupun Google Sheets akan otomatis sinkron.`
+        );
+      } else {
+        onAddAuditLog(
+          'Input Realisasi SP2D',
+          `Sinkronisasi ${subkegiatanList.length} subkegiatan ke Google Sheets "${connectedSheet.title}" tab "${selectedTab}".`
+        );
+        setSuccessMsg(
+          `Berhasil menyinkronkan ${subkegiatanList.length} subkegiatan ke "${connectedSheet.title}" (${selectedTab}).`
+        );
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Gagal menulis pembaruan ke Google Sheets.');
     } finally {
@@ -298,14 +318,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-[#EEF3FA]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
-              <FileSpreadsheet className="w-5 h-5" />
+              <ArrowLeftRight className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-[16px] font-extrabold text-[#0E264D]">
-                Koneksi Spreadsheet & Google Sheets — SIPANGGAR
+                Koneksi 2 Arah Dashboard ↔ Spreadsheet — SIPANGGAR
               </h3>
               <p className="text-[12px] text-slate-600">
-                Sumber aktif: <strong className="text-[#0E264D]">{activeSourceLabel}</strong> ({subkegiatanList.length} Subkegiatan)
+                Sumber aktif: <strong className="text-[#0E264D]">{activeSourceLabel}</strong> ({subkegiatanList.length} Subkegiatan · Sinkron Langsung)
               </p>
             </div>
           </div>
@@ -313,7 +333,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-500 hover:bg-white hover:text-slate-800 cursor-pointer"
-            aria-label="Tutup panel Google Sheets"
+            aria-label="Tutup panel koneksi spreadsheet"
           >
             <X className="w-5 h-5" />
           </button>
@@ -321,64 +341,61 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
         {/* Body */}
         <div className="p-5 overflow-y-auto space-y-4 text-[13px]">
-          {/* Active Database SIPANGGAR / Local CSV Card */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+          {/* Built-in Two-Way Spreadsheet Editor Card (Zero File Uploads) */}
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2.5">
-                <Database className="w-5 h-5 text-[#0E76F4] shrink-0 mt-0.5" />
+                <Database className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-bold text-[#0E264D]">
-                    Spreadsheet Database SIPANGGAR (SPJ Belanja Fungsional)
+                    Spreadsheet Langsung 2 Arah (Tanpa Unggah File)
                   </div>
                   <div className="text-[12px] text-slate-600 mt-0.5">
                     {activeSpjMetadata
                       ? `${activeSpjMetadata.perangkatDaerah} · PA: ${activeSpjMetadata.penggunaAnggaran}`
-                      : `Sumber data aktif: ${activeSourceLabel}`}
+                      : `Data ${subkegiatanList.length} Subkegiatan langsung terhubung 2 arah dengan seluruh grafik & laporan Dashboard.`}
                   </div>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <input
-                  ref={csvInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleLocalCsvUpload}
-                  className="hidden"
-                />
                 <button
                   type="button"
-                  onClick={() => csvInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-[#0E264D] text-[12px] font-bold cursor-pointer"
+                  onClick={() => {
+                    onClose();
+                    onOpenInlineSpreadsheet();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-bold cursor-pointer"
                 >
-                  <Upload className="w-3.5 h-3.5 text-[#0E76F4]" />
-                  <span>Unggah File CSV</span>
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Buka Spreadsheet 2 Arah</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleReloadDatabaseSipanggar}
                   disabled={loadingAction !== null}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0E76F4] hover:bg-[#0C64D2] disabled:opacity-60 text-white text-[12px] font-bold cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-60 text-[#0E264D] text-[12px] font-bold cursor-pointer"
                 >
                   <RefreshCw
-                    className={`w-3.5 h-3.5 ${
+                    className={`w-3.5 h-3.5 text-[#0E76F4] ${
                       loadingAction === 'reload-default' ? 'animate-spin' : ''
                     }`}
                   />
-                  <span>Muat Database SIPANGGAR</span>
+                  <span>Reset Database SIPANGGAR</span>
                 </button>
               </div>
             </div>
           </div>
+
           {/* Google Auth Status Banner */}
           {!isSignedIn ? (
             <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <div className="font-bold text-[#0E264D] text-[14px]">
-                  Masuk dengan Akun Google Anda
+                  Hubungkan ke Google Sheets (Opsional — Sinkron Cloud 2 Arah)
                 </div>
                 <p className="text-[12.5px] text-slate-600 mt-0.5">
-                  Diperlukan izin akses Google Sheets untuk membaca dan menyinkronkan lembar kerja anggaran Anda.
+                  Masuk dengan Google jika Anda ingin menyinkronkan data SIPANGGAR secara otomatis 2 arah ke dokumen Google Sheets Anda.
                 </p>
               </div>
               <div className="shrink-0">
@@ -429,14 +446,14 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
           {isSignedIn && (
             <>
-              {/* Option 1: Create new structured SIPANGGAR Spreadsheet */}
+              {/* Create new live 2-way Google Sheet */}
               <div className="rounded-xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <div className="font-bold text-[#0E264D]">
-                    Belum punya Spreadsheet SIPANGGAR?
+                    Buat Google Spreadsheet Baru (Langsung Terhubung 2 Arah)
                   </div>
                   <p className="text-[12px] text-slate-600 mt-0.5">
-                    Buat Google Spreadsheet baru otomatis berisi seluruh data pagu & realisasi TA {selectedYear}.
+                    Otomatis membuat Google Sheets berisi {subkegiatanList.length} subkegiatan TA {selectedYear} dan mengaktifkan sinkronisasi 2 arah.
                   </p>
                 </div>
                 <button
@@ -449,22 +466,22 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   <span>
                     {loadingAction === 'create-sheet'
                       ? 'Membuat Spreadsheet...'
-                      : 'Buat Spreadsheet Baru'}
+                      : 'Buat & Hubungkan 2 Arah'}
                   </span>
                 </button>
               </div>
 
-              {/* Option 2: Connect Existing Spreadsheet URL or ID */}
+              {/* Connect Existing Spreadsheet URL or ID */}
               <form
                 onSubmit={handleLoadSpreadsheet}
                 className="rounded-xl border border-slate-200 p-4 space-y-3"
               >
                 <div>
                   <label className="block font-bold text-[#0E264D] mb-1">
-                    Hubungkan ke Google Spreadsheet yang Sudah Ada
+                    Atau Tempel Tautan Google Spreadsheet Anda
                   </label>
                   <p className="text-[12px] text-slate-500">
-                    Tempel tautan (URL) Google Sheets atau Spreadsheet ID Anda di bawah ini.
+                    Cukup tempel URL Google Sheets — tanpa perlu mengunduh atau mengunggah file CSV.
                   </p>
                 </div>
 
@@ -485,18 +502,18 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                     disabled={loadingAction !== null}
                     className="px-4 py-2 rounded-xl bg-[#0E76F4] hover:bg-[#0C64D2] disabled:opacity-60 text-white text-[12.5px] font-bold whitespace-nowrap cursor-pointer"
                   >
-                    {loadingAction === 'load-meta' ? 'Memuat...' : 'Muat Spreadsheet'}
+                    {loadingAction === 'load-meta' ? 'Menghubungkan...' : 'Hubungkan Sheet'}
                   </button>
                 </div>
               </form>
 
-              {/* Connected Sheet Controls */}
+              {/* Connected Sheet Controls & 2-Way Auto Sync */}
               {connectedSheet && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 space-y-3">
+                <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 space-y-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-[11px] font-bold uppercase tracking-wide text-[#0E76F4]">
-                        Spreadsheet Terhubung
+                        Google Sheets Terhubung
                       </div>
                       <div className="text-[14.5px] font-extrabold text-[#0E264D]">
                         {connectedSheet.title}
@@ -513,10 +530,53 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                     </a>
                   </div>
 
+                  {/* Two-way Auto Sync Switch */}
+                  <div className="rounded-xl bg-white border border-blue-200 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-[#0E264D] flex items-center gap-1.5">
+                        <ArrowLeftRight className="w-4 h-4 text-emerald-600" />
+                        <span>Sinkronisasi 2 Arah Otomatis (Real-time)</span>
+                      </div>
+                      <p className="text-[11.5px] text-slate-600 mt-0.5">
+                        Edit di Dashboard/Spreadsheet SIPANGGAR otomatis tersimpan ke Google Sheets, dan edit di Google Sheets otomatis ditarik tiap 15 detik.
+                        {lastSyncedAt ? ` (Terakhir: ${lastSyncedAt})` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (autoSyncEnabled) {
+                            onToggleAutoSync(false);
+                          } else {
+                            setConfirmMode('enable-auto');
+                          }
+                        }}
+                        className={`px-3.5 py-1.5 rounded-lg text-[12px] font-bold cursor-pointer transition-colors ${
+                          autoSyncEnabled
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                        }`}
+                      >
+                        {autoSyncEnabled ? '2 Arah: AKTIF' : 'Aktifkan 2 Arah'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={onManualTwoWaySync}
+                        disabled={isSyncingNow || !selectedTab}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 text-[#0E264D] text-[12px] font-bold cursor-pointer disabled:opacity-60"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isSyncingNow ? 'animate-spin' : ''}`} />
+                        <span>Sinkronkan</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
                     <div className="sm:col-span-5">
                       <label className="block text-[11.5px] font-bold text-slate-700 mb-1">
-                        Pilih Tab Lembar Kerja
+                        Tab Lembar Kerja Aktif
                       </label>
                       <select
                         value={selectedTab}
@@ -548,7 +608,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => setConfirmSyncOpen(true)}
+                        onClick={() => setConfirmMode('push-once')}
                         disabled={loadingAction !== null || !selectedTab}
                         className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0D2B5C] hover:bg-[#143C78] text-white text-[12.5px] font-bold cursor-pointer disabled:opacity-60"
                       >
@@ -569,7 +629,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
                     <span className="font-bold text-[#0E264D] text-[12.5px]">
-                      Pratinjau Data Spreadsheet ({previewRows.length} baris)
+                      Pratinjau Data Google Sheets ({previewRows.length} baris)
                     </span>
                     <button
                       type="button"
@@ -643,19 +703,23 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         </div>
       </div>
 
-      {/* Explicit Confirmation Dialog before overwriting Google Sheets data */}
-      {confirmSyncOpen && connectedSheet && (
+      {/* Explicit Confirmation Dialog before overwriting or enabling auto-write on Google Sheets */}
+      {confirmMode && connectedSheet && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/60">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-200 bg-amber-50 flex items-center gap-2.5">
               <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
               <h4 className="text-[15px] font-extrabold text-[#0E264D]">
-                Konfirmasi Pembaruan Spreadsheet
+                {confirmMode === 'enable-auto'
+                  ? 'Aktifkan Sinkronisasi 2 Arah Otomatis?'
+                  : 'Konfirmasi Pembaruan Spreadsheet'}
               </h4>
             </div>
             <div className="p-5 space-y-2.5 text-[13px] text-slate-700">
               <p>
-                Anda akan menimpa dan memperbarui isi lembar kerja pada Google Sheets berikut:
+                {confirmMode === 'enable-auto'
+                  ? 'SIPANGGAR akan menyinkronkan data aktif ke tab Google Sheets ini sekarang, lalu secara otomatis mengirim perubahan Dashboard dan menarik pembaruan dari Google Sheets setiap 15 detik.'
+                  : 'Anda akan menimpa dan memperbarui isi lembar kerja pada Google Sheets berikut:'}
               </p>
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-1 text-[12.5px]">
                 <div>
@@ -667,30 +731,29 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   <strong className="text-[#0E264D]">{selectedTab}</strong>
                 </div>
                 <div>
-                  <span className="text-slate-500">Data yang ditulis:</span>{' '}
+                  <span className="text-slate-500">Data yang disinkronkan:</span>{' '}
                   <strong className="text-[#0E264D] tabular-nums">
                     {subkegiatanList.length} subkegiatan (+ 1 baris header)
                   </strong>
                 </div>
               </div>
-              <p className="text-[12px] text-slate-500">
-                Data sebelumnya pada rentang A1:K500 di tab tersebut akan digantikan dengan data SIPANGGAR terbaru.
-              </p>
             </div>
             <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setConfirmSyncOpen(false)}
+                onClick={() => setConfirmMode(null)}
                 className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-[12.5px] font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
-                onClick={handleConfirmedSyncPush}
+                onClick={handleConfirmedWriteAction}
                 className="px-4 py-2 rounded-lg bg-[#0E76F4] hover:bg-[#0C64D2] text-white text-[12.5px] font-bold cursor-pointer"
               >
-                Konfirmasi & Simpan ke Spreadsheet
+                {confirmMode === 'enable-auto'
+                  ? 'Konfirmasi & Aktifkan 2 Arah'
+                  : 'Konfirmasi & Simpan ke Spreadsheet'}
               </button>
             </div>
           </div>

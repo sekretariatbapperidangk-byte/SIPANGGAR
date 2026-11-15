@@ -3,12 +3,15 @@ import {
   ArrowLeftRight,
   Calendar,
   ChevronDown,
+  Eye,
   FileSpreadsheet,
+  LogOut,
   Menu,
   RefreshCw,
+  ShieldCheck,
   TrendingUp,
 } from 'lucide-react';
-import { QuarterId } from '../types/budget';
+import { AuthSession, QuarterId } from '../types/budget';
 import { QUARTER_OPTIONS } from '../data/sipanggarData';
 import { PimpinanAvatar } from './BrandAssets';
 
@@ -17,8 +20,8 @@ interface TopBarProps {
   onChangeYear: (year: number) => void;
   selectedQuarter: QuarterId;
   onChangeQuarter: (quarter: QuarterId) => void;
-  userRole: string;
-  onChangeRole: (role: string) => void;
+  session: AuthSession;
+  onLogout: () => void;
   onOpenMobileMenu: () => void;
   onOpenSheetsModal: () => void;
   connectedSheetTitle: string | null;
@@ -29,15 +32,14 @@ interface TopBarProps {
 }
 
 const AVAILABLE_YEARS = [2026, 2025, 2024];
-const AVAILABLE_ROLES = ['Pimpinan', 'Sekretaris', 'Operator Anggaran'];
 
 export const TopBar: React.FC<TopBarProps> = ({
   selectedYear,
   onChangeYear,
   selectedQuarter,
   onChangeQuarter,
-  userRole,
-  onChangeRole,
+  session,
+  onLogout,
   onOpenMobileMenu,
   onOpenSheetsModal,
   connectedSheetTitle,
@@ -47,6 +49,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   perangkatDaerahSubtitle,
 }) => {
   const spreadsheetDisplay = connectedSheetTitle || activeSourceLabel;
+  const isAdmin = session.role === 'Administrator';
 
   return (
     <header className="w-full pt-4 pb-3 px-4 sm:px-6 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 no-print">
@@ -80,26 +83,38 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      {/* Right Interactive Selectors: Spreadsheet, Tahun Anggaran, Periode, User Role */}
+      {/* Right Interactive Selectors: Spreadsheet, Tahun Anggaran, Periode, Authenticated User */}
       <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-        {/* Google Sheets / 2-Way Spreadsheet Sync Trigger */}
-        <button
-          type="button"
-          onClick={onOpenSheetsModal}
-          className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
-          title={`Sumber data 2 arah aktif: ${spreadsheetDisplay}`}
-        >
-          {isSyncingNow ? (
-            <RefreshCw className="w-4 h-4 text-emerald-600 shrink-0 animate-spin" />
-          ) : autoSyncEnabled ? (
-            <ArrowLeftRight className="w-4 h-4 text-emerald-600 shrink-0" />
-          ) : (
+        {/* Google Sheets / Spreadsheet Sync Status (Interactive for Admin, Read-only for Pimpinan) */}
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={onOpenSheetsModal}
+            className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+            title={`Kelola koneksi spreadsheet: ${spreadsheetDisplay}`}
+          >
+            {isSyncingNow ? (
+              <RefreshCw className="w-4 h-4 text-emerald-600 shrink-0 animate-spin" />
+            ) : autoSyncEnabled ? (
+              <ArrowLeftRight className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+            )}
+            <span className="text-[13px] font-bold max-w-[175px] truncate">
+              {spreadsheetDisplay}
+            </span>
+          </button>
+        ) : (
+          <div
+            className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border shadow-xs whitespace-nowrap shrink-0 bg-slate-50 border-slate-200 text-slate-700"
+            title={`Sumber data pantauan: ${spreadsheetDisplay}`}
+          >
             <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
-          )}
-          <span className="text-[13px] font-bold max-w-[175px] truncate">
-            {spreadsheetDisplay}
-          </span>
-        </button>
+            <span className="text-[13px] font-bold max-w-[175px] truncate">
+              {spreadsheetDisplay}
+            </span>
+          </div>
+        )}
 
         {/* Tahun Anggaran Selector */}
         <div className="relative flex items-center gap-2.5 bg-white border border-slate-200/90 rounded-xl px-3.5 py-2 shadow-xs hover:border-blue-300 transition-colors">
@@ -152,27 +167,33 @@ export const TopBar: React.FC<TopBarProps> = ({
           </select>
         </div>
 
-        {/* User Profile Selector */}
-        <div className="relative flex items-center gap-2.5 bg-white border border-slate-200/90 rounded-xl px-3 py-1.5 shadow-xs hover:border-blue-300 transition-colors">
+        {/* Authenticated User Role Badge + Logout */}
+        <div className="flex items-center gap-2.5 bg-white border border-slate-200/90 rounded-xl px-3 py-1.5 shadow-xs">
           <PimpinanAvatar className="w-8 h-8 shrink-0" />
-          <div className="pr-5">
-            <span className="text-[13.5px] font-bold text-[#0E264D] whitespace-nowrap block">
-              {userRole}
+          <div className="leading-tight pr-1">
+            <div className="flex items-center gap-1">
+              <span className="text-[13px] font-extrabold text-[#0E264D] whitespace-nowrap">
+                {session.role}
+              </span>
+              {isAdmin ? (
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              ) : (
+                <Eye className="w-3.5 h-3.5 text-[#0E76F4] shrink-0" />
+              )}
+            </div>
+            <span className="text-[10.5px] font-medium text-slate-500 whitespace-nowrap block">
+              {isAdmin ? 'Akses Edit Penuh' : 'Mode Pantau (Read-Only)'}
             </span>
           </div>
-          <ChevronDown className="w-4 h-4 text-slate-500 absolute right-2.5 pointer-events-none" />
-          <select
-            aria-label="Pilih Peran Pengguna"
-            value={userRole}
-            onChange={(e) => onChangeRole(e.target.value)}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          <button
+            type="button"
+            onClick={onLogout}
+            className="ml-1 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11.5px] font-bold transition-colors cursor-pointer"
+            title="Keluar dan ganti akun"
           >
-            {AVAILABLE_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {role}
-              </option>
-            ))}
-          </select>
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Keluar</span>
+          </button>
         </div>
       </div>
     </header>

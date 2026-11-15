@@ -7,6 +7,7 @@ import {
 } from './data/sipanggarData';
 import {
   AuditLogItem,
+  AuthSession,
   FiscalYearDataset,
   KegiatanItem,
   NavSection,
@@ -32,6 +33,7 @@ import {
   RealisasiSubmitResult,
 } from './components/InputRealisasiView';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
+import { LoginView } from './components/LoginView';
 import { googleSignIn, initAuth, logout } from './services/googleAuth';
 import {
   readSubkegiatanFromSheet,
@@ -48,6 +50,7 @@ import {
 const DEFAULT_DATABASE_CSV_URL = '/assets/aistudio/Database_SIPANGGAR_9d822400';
 const LIVE_ROWS_STORAGE_KEY = 'sipanggar_live_rows_v1';
 const GSHEET_LINK_STORAGE_KEY = 'sipanggar_gsheet_link_v1';
+const AUTH_SESSION_STORAGE_KEY = 'sipanggar_auth_session_v1';
 
 const PROGRAM_COLORS: Record<Exclude<ProgramCategory, 'Semua Program'>, string> = {
   'Pelayanan Umum': '#0E76F4',
@@ -72,10 +75,26 @@ const formatNowTime = () =>
   });
 
 export default function App() {
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
+    try {
+      const saved = localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as AuthSession;
+        if (parsed && (parsed.role === 'Administrator' || parsed.role === 'Pimpinan')) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return null;
+  });
+
+  const isAdmin = authSession?.role === 'Administrator';
+
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedQuarter, setSelectedQuarter] = useState<QuarterId>('TW4');
-  const [userRole, setUserRole] = useState<string>('Pimpinan');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   const [subkegiatanList, setSubkegiatanList] =
@@ -268,6 +287,28 @@ export default function App() {
     setSelectedSheetTab('');
   };
 
+  const handleAppLogin = (session: AuthSession) => {
+    setAuthSession(session);
+    setActiveSection('dashboard');
+    setSheetsModalOpen(false);
+    try {
+      localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(session));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleAppLogout = () => {
+    setAuthSession(null);
+    setActiveSection('dashboard');
+    setSheetsModalOpen(false);
+    try {
+      localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
   const addAuditLog = (
     aksi: AuditLogItem['aksi'],
     keterangan: string,
@@ -283,8 +324,12 @@ export default function App() {
         id: `log-${Date.now()}`,
         tanggal: '14 Nov 2026',
         waktu: `${waktu} WITA`,
-        pengguna: googleUser?.displayName || activeSpjDoc?.metadata.penggunaAnggaran || userRole,
-        jabatan: userRole,
+        pengguna:
+          authSession?.displayName ||
+          googleUser?.displayName ||
+          activeSpjDoc?.metadata.penggunaAnggaran ||
+          'Administrator',
+        jabatan: authSession?.jabatan || 'Administrator Keuangan',
         aksi,
         keterangan,
         nominal,
@@ -443,6 +488,7 @@ export default function App() {
   }, [selectedYear, realisasiDelta, subkegiatanList, isSpreadsheetMode, activeSpjDoc]);
 
   const handleSaveFollowUp = (subId: string, tindakLanjut: string) => {
+    if (!isAdmin) return;
     let subName = '';
     setSubkegiatanList((prev) => {
       const next = prev.map((item) => {
@@ -462,6 +508,7 @@ export default function App() {
     newRealisasi: number,
     keterangan: string
   ) => {
+    if (!isAdmin) return;
     let diff = 0;
     setSubkegiatanList((prev) => {
       const next = prev.map((item) => {
@@ -492,6 +539,12 @@ export default function App() {
   const handleSubmitInputRealisasi = async (
     payload: RealisasiInputPayload
   ): Promise<RealisasiSubmitResult> => {
+    if (!isAdmin) {
+      return {
+        syncedToSheet: false,
+        errorMessage: 'Akses ditolak: Pimpinan hanya dapat memantau tanpa mengedit data.',
+      };
+    }
     const targetItem = subkegiatanList.find((s) => s.id === payload.subId);
     if (!targetItem) {
       return { syncedToSheet: false, errorMessage: 'Subkegiatan tidak ditemukan.' };
@@ -587,9 +640,9 @@ export default function App() {
     );
   };
 
-  // Auto-Push: Dashboard/Spreadsheet edits -> Google Sheets (debounced 900ms when 2-way autoSync is ON)
+  // Auto-Push: Dashboard/Input edits -> Google Sheets (debounced 900ms when 2-way autoSync is ON & user is Administrator)
   useEffect(() => {
-    if (!autoSyncEnabled || !accessToken || !connectedSheet || !selectedSheetTab) return;
+    if (!isAdmin || !autoSyncEnabled || !accessToken || !connectedSheet || !selectedSheetTab) return;
     if (!isDirtyForRemoteRef.current) return;
 
     const timer = window.setTimeout(async () => {
@@ -612,7 +665,7 @@ export default function App() {
     }, 900);
 
     return () => window.clearTimeout(timer);
-  }, [subkegiatanList, autoSyncEnabled, accessToken, connectedSheet, selectedSheetTab]);
+  }, [isAdmin, subkegiatanList, autoSyncEnabled, accessToken, connectedSheet, selectedSheetTab]);
 
   // Auto-Pull: Google Sheets edits -> Dashboard/Spreadsheet (every 15 seconds when 2-way autoSync is ON)
   useEffect(() => {
@@ -703,18 +756,28 @@ export default function App() {
 
   const unrealizedAlertCount = activeDataset.statusCounts.belumTerealisasi;
 
+  if (!authSession) {
+    return <LoginView onLoginSuccess={handleAppLogin} />;
+  }
+
+  const effectiveSection: NavSection =
+    !isAdmin && activeSection === 'input-realisasi' ? 'dashboard' : activeSection;
+
   return (
     <div className="min-h-screen flex bg-[#EEF3FA] text-[#0E264D]">
       {/* Left Navigation Sidebar */}
       <Sidebar
-        activeSection={activeSection}
+        activeSection={effectiveSection}
         onSelectSection={(sec) => {
+          if (!isAdmin && sec === 'input-realisasi') return;
           if (sec === 'data-anggaran') {
             setDataStatusFilter('Semua');
           }
           setActiveSection(sec);
         }}
         alertCount={unrealizedAlertCount}
+        userRole={authSession.role}
+        onLogout={handleAppLogout}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
       />
@@ -726,10 +789,12 @@ export default function App() {
           onChangeYear={setSelectedYear}
           selectedQuarter={selectedQuarter}
           onChangeQuarter={setSelectedQuarter}
-          userRole={userRole}
-          onChangeRole={setUserRole}
+          session={authSession}
+          onLogout={handleAppLogout}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
-          onOpenSheetsModal={() => setSheetsModalOpen(true)}
+          onOpenSheetsModal={() => {
+            if (isAdmin) setSheetsModalOpen(true);
+          }}
           connectedSheetTitle={connectedSheet?.title || null}
           activeSourceLabel={activeSourceLabel}
           autoSyncEnabled={autoSyncEnabled}
@@ -742,7 +807,7 @@ export default function App() {
         />
 
         <main className="flex-1 px-4 sm:px-6">
-          {activeSection === 'dashboard' && (
+          {effectiveSection === 'dashboard' && (
             <DashboardView
               dataset={activeDataset}
               selectedQuarter={selectedQuarter}
@@ -753,20 +818,23 @@ export default function App() {
             />
           )}
 
-          {activeSection === 'data-anggaran' && (
+          {effectiveSection === 'data-anggaran' && (
             <DataAnggaranView
               key={dataStatusFilter}
               dataset={activeDataset}
               subkegiatanList={subkegiatanList}
               initialStatusFilter={dataStatusFilter}
+              canEdit={isAdmin}
               onUpdateRealisasi={handleUpdateRealisasi}
-              onOpenSheetsModal={() => setSheetsModalOpen(true)}
+              onOpenSheetsModal={() => {
+                if (isAdmin) setSheetsModalOpen(true);
+              }}
               connectedSheetTitle={connectedSheet?.title || null}
               activeSourceLabel={activeSourceLabel}
             />
           )}
 
-          {activeSection === 'input-realisasi' && (
+          {effectiveSection === 'input-realisasi' && isAdmin && (
             <InputRealisasiView
               dataset={activeDataset}
               subkegiatanList={subkegiatanList}
@@ -782,18 +850,19 @@ export default function App() {
             />
           )}
 
-          {activeSection === 'monitoring' && (
+          {effectiveSection === 'monitoring' && (
             <MonitoringRealisasiView dataset={activeDataset} />
           )}
 
-          {activeSection === 'peringatan' && (
+          {effectiveSection === 'peringatan' && (
             <PeringatanRealisasiView
               subkegiatanList={subkegiatanList}
+              canEdit={isAdmin}
               onSaveFollowUp={handleSaveFollowUp}
             />
           )}
 
-          {activeSection === 'laporan' && (
+          {effectiveSection === 'laporan' && (
             <LaporanView
               dataset={activeDataset}
               subkegiatanList={subkegiatanList}
@@ -801,52 +870,54 @@ export default function App() {
             />
           )}
 
-          {activeSection === 'riwayat' && (
+          {effectiveSection === 'riwayat' && (
             <RiwayatPembaruanView logs={auditLogs} />
           )}
         </main>
       </div>
 
-      {/* Google Sheets & 2-Way Spreadsheet Integration Modal */}
-      <GoogleSheetsModal
-        isOpen={sheetsModalOpen}
-        onClose={() => setSheetsModalOpen(false)}
-        googleUser={googleUser}
-        accessToken={accessToken}
-        needsAuth={needsAuth}
-        isLoggingIn={isLoggingIn}
-        onGoogleLogin={handleGoogleLogin}
-        onGoogleLogout={() => {
-          setAutoSyncEnabled(false);
-          return handleGoogleLogout();
-        }}
-        selectedYear={selectedYear}
-        subkegiatanList={subkegiatanList}
-        kegiatanList={activeDataset.kegiatanList}
-        connectedSheet={connectedSheet}
-        selectedTab={selectedSheetTab}
-        activeSourceLabel={activeSourceLabel}
-        activeSpjMetadata={activeSpjDoc?.metadata || null}
-        autoSyncEnabled={autoSyncEnabled}
-        isSyncingNow={isSyncingNow}
-        lastSyncedAt={lastSyncedAt}
-        onToggleAutoSync={(enabled) => {
-          setAutoSyncEnabled(enabled);
-          if (enabled) {
-            lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
-            setLastSyncedAt(formatNowTime());
-          }
-        }}
-        onManualTwoWaySync={handleManualTwoWaySync}
-        onOpenInputRealisasi={() => setActiveSection('input-realisasi')}
-        onChangeConnectedSheet={(meta, tab) => {
-          setConnectedSheet(meta);
-          setSelectedSheetTab(tab);
-        }}
-        onImportRows={handleImportRowsFromSheet}
-        onResetDefaultDatabase={() => loadDefaultDatabaseSpreadsheet(true)}
-        onAddAuditLog={(aksi, keterangan) => addAuditLog(aksi, keterangan)}
-      />
+      {/* Google Sheets & 2-Way Spreadsheet Integration Modal (Administrator Only) */}
+      {isAdmin && (
+        <GoogleSheetsModal
+          isOpen={sheetsModalOpen}
+          onClose={() => setSheetsModalOpen(false)}
+          googleUser={googleUser}
+          accessToken={accessToken}
+          needsAuth={needsAuth}
+          isLoggingIn={isLoggingIn}
+          onGoogleLogin={handleGoogleLogin}
+          onGoogleLogout={() => {
+            setAutoSyncEnabled(false);
+            return handleGoogleLogout();
+          }}
+          selectedYear={selectedYear}
+          subkegiatanList={subkegiatanList}
+          kegiatanList={activeDataset.kegiatanList}
+          connectedSheet={connectedSheet}
+          selectedTab={selectedSheetTab}
+          activeSourceLabel={activeSourceLabel}
+          activeSpjMetadata={activeSpjDoc?.metadata || null}
+          autoSyncEnabled={autoSyncEnabled}
+          isSyncingNow={isSyncingNow}
+          lastSyncedAt={lastSyncedAt}
+          onToggleAutoSync={(enabled) => {
+            setAutoSyncEnabled(enabled);
+            if (enabled) {
+              lastRemoteSignatureRef.current = serializeRowsSignature(subkegiatanList);
+              setLastSyncedAt(formatNowTime());
+            }
+          }}
+          onManualTwoWaySync={handleManualTwoWaySync}
+          onOpenInputRealisasi={() => setActiveSection('input-realisasi')}
+          onChangeConnectedSheet={(meta, tab) => {
+            setConnectedSheet(meta);
+            setSelectedSheetTab(tab);
+          }}
+          onImportRows={handleImportRowsFromSheet}
+          onResetDefaultDatabase={() => loadDefaultDatabaseSpreadsheet(true)}
+          onAddAuditLog={(aksi, keterangan) => addAuditLog(aksi, keterangan)}
+        />
+      )}
     </div>
   );
 }

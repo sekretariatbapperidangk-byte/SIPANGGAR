@@ -6,16 +6,19 @@ import {
   FileText,
   History,
   Home,
+  LogOut,
   TrendingUp,
   X,
 } from 'lucide-react';
-import { NavSection } from '../types/budget';
+import { NavSection, UserRole } from '../types/budget';
 import { NagekeoCrest, NagekeoSidebarLandscape } from './BrandAssets';
 
 interface SidebarProps {
   activeSection: NavSection;
   onSelectSection: (section: NavSection) => void;
   alertCount: number;
+  userRole: UserRole;
+  onLogout: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -24,10 +27,11 @@ const NAV_ITEMS: {
   id: NavSection;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  adminOnly?: boolean;
 }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Home },
   { id: 'data-anggaran', label: 'Data Anggaran', icon: Database },
-  { id: 'input-realisasi', label: 'Input Realisasi', icon: ClipboardEdit },
+  { id: 'input-realisasi', label: 'Input Realisasi', icon: ClipboardEdit, adminOnly: true },
   { id: 'monitoring', label: 'Monitoring Realisasi', icon: TrendingUp },
   { id: 'peringatan', label: 'Peringatan Realisasi', icon: AlertTriangle },
   { id: 'laporan', label: 'Laporan', icon: FileText },
@@ -38,9 +42,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSelectSection,
   alertCount,
+  userRole,
+  onLogout,
   mobileOpen,
   onCloseMobile,
 }) => {
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => !item.adminOnly || userRole === 'Administrator'
+  );
+
   const sidebarBody = (
     <aside
       className="w-[248px] h-full flex flex-col text-white shrink-0 select-none overflow-y-auto"
@@ -78,7 +88,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Navigation Links */}
       <nav className="px-3 flex-1 space-y-1" aria-label="Menu Utama SIPANGGAR">
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeSection === item.id;
           return (
@@ -112,6 +122,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
+
+      {/* Account Session Footer + Logout */}
+      <div className="px-3 pt-3 pb-1">
+        <button
+          type="button"
+          onClick={onLogout}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-blue-100 hover:text-white text-[12px] font-bold transition-colors cursor-pointer"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Keluar ({userRole})</span>
+        </button>
+      </div>
 
       {/* Bottom Nagekeo Scenic Graphic */}
       <NagekeoSidebarLandscape />

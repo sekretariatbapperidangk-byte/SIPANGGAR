@@ -31,6 +31,7 @@ interface DataAnggaranViewProps {
   dataset: FiscalYearDataset;
   subkegiatanList: SubkegiatanItem[];
   initialStatusFilter: RealizationStatus | 'Semua';
+  canEdit: boolean;
   onUpdateRealisasi: (subId: string, newRealisasi: number, keterangan: string) => void;
   onOpenSheetsModal: () => void;
   connectedSheetTitle: string | null;
@@ -41,6 +42,7 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
   dataset,
   subkegiatanList,
   initialStatusFilter,
+  canEdit,
   onUpdateRealisasi,
   onOpenSheetsModal,
   connectedSheetTitle,
@@ -96,15 +98,21 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenSheetsModal}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border transition-colors cursor-pointer whitespace-nowrap bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-            >
-              <span>
-                {connectedSheetTitle ? `Sheets: ${connectedSheetTitle}` : `Sumber: ${activeSourceLabel}`}
+            {canEdit ? (
+              <button
+                type="button"
+                onClick={onOpenSheetsModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border transition-colors cursor-pointer whitespace-nowrap bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+              >
+                <span>
+                  {connectedSheetTitle ? `Sheets: ${connectedSheetTitle}` : `Sumber: ${activeSourceLabel}`}
+                </span>
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border whitespace-nowrap bg-blue-50 border-blue-200 text-[#0E264D]">
+                Mode Pantau Pimpinan (Hanya Baca)
               </span>
-            </button>
+            )}
             {(['Semua', 'Baik', 'Perlu Perhatian', 'Belum Terealisasi'] as const).map((st) => (
               <button
                 key={st}
@@ -162,13 +170,13 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
                 <th className="py-2.5 px-3 text-right">Realisasi (Rp)</th>
                 <th className="py-2.5 px-3 text-right">% Serapan</th>
                 <th className="py-2.5 px-3 text-center">Status</th>
-                <th className="py-2.5 px-3 text-center">Aksi</th>
+                {canEdit && <th className="py-2.5 px-3 text-center">Aksi</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={canEdit ? 8 : 7} className="py-8 text-center text-slate-500">
                     Tidak ada data subkegiatan yang sesuai dengan filter pencarian.
                   </td>
                 </tr>
@@ -211,16 +219,18 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => openEditModal(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-[#0E76F4] text-[#0E76F4] hover:text-white text-[11.5px] font-bold transition-colors cursor-pointer whitespace-nowrap"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Input SP2D</span>
-                      </button>
-                    </td>
+                    {canEdit && (
+                      <td className="py-3 px-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(item)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-[#0E76F4] text-[#0E76F4] hover:text-white text-[11.5px] font-bold transition-colors cursor-pointer whitespace-nowrap"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Input SP2D</span>
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -230,7 +240,7 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
       </div>
 
       {/* Modal Input / Update Realisasi */}
-      {editingItem && (
+      {canEdit && editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/55 backdrop-blur-[1px]">
           <form
             onSubmit={handleSaveEdit}
@@ -435,11 +445,13 @@ export const MonitoringRealisasiView: React.FC<{ dataset: FiscalYearDataset }> =
 
 interface PeringatanRealisasiViewProps {
   subkegiatanList: SubkegiatanItem[];
+  canEdit: boolean;
   onSaveFollowUp: (subId: string, tindakLanjut: string) => void;
 }
 
 export const PeringatanRealisasiView: React.FC<PeringatanRealisasiViewProps> = ({
   subkegiatanList,
+  canEdit,
   onSaveFollowUp,
 }) => {
   const [tab, setTab] = useState<'belum' | 'perhatian'>('belum');
@@ -553,20 +565,22 @@ export const PeringatanRealisasiView: React.FC<PeringatanRealisasiViewProps> = (
                       {item.tindakLanjut || 'Belum ada catatan tindak lanjut.'}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingSubId(item.id);
-                      setNoteInput(item.tindakLanjut || '');
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-[11.5px] font-bold text-[#0E264D] hover:bg-slate-50 shrink-0 cursor-pointer"
-                  >
-                    Catat Tindak Lanjut
-                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingSubId(item.id);
+                        setNoteInput(item.tindakLanjut || '');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-[11.5px] font-bold text-[#0E264D] hover:bg-slate-50 shrink-0 cursor-pointer"
+                    >
+                      Catat Tindak Lanjut
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {editingSubId === item.id && (
+              {canEdit && editingSubId === item.id && (
                 <div className="mt-3 flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"

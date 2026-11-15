@@ -7,6 +7,16 @@ export type NavSection =
   | 'laporan'
   | 'riwayat';
 
+export type UserRole = 'Administrator' | 'Pimpinan';
+
+export interface AuthSession {
+  role: UserRole;
+  username: string;
+  displayName: string;
+  jabatan: string;
+  loggedInAt: string;
+}
+
 export type QuarterId = 'TW1' | 'TW2' | 'TW3' | 'TW4';
 
 export type ProgramCategory =

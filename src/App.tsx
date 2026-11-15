@@ -26,7 +26,11 @@ import {
   PeringatanRealisasiView,
   RiwayatPembaruanView,
 } from './components/SubPages';
-import { SpreadsheetView } from './components/SpreadsheetView';
+import {
+  InputRealisasiView,
+  RealisasiInputPayload,
+  RealisasiSubmitResult,
+} from './components/InputRealisasiView';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 import { googleSignIn, initAuth, logout } from './services/googleAuth';
 import {
@@ -214,7 +218,7 @@ export default function App() {
           hasSavedRows = true;
           setSubkegiatanList(parsed);
           setIsSpreadsheetMode(true);
-          setActiveSourceLabel('Spreadsheet 2 Arah');
+          setActiveSourceLabel('Database SIPANGGAR');
         }
       }
     } catch {
@@ -485,63 +489,74 @@ export default function App() {
     addAuditLog('Input Realisasi SP2D', keterangan, newRealisasi);
   };
 
-  const handleUpdateSpreadsheetRow = (subId: string, patch: Partial<SubkegiatanItem>) => {
-    setSubkegiatanList((prev) => {
-      const next = prev.map((item) => {
-        if (item.id !== subId) return item;
-        const updated: SubkegiatanItem = { ...item, ...patch };
-        const pagu = Math.max(0, updated.pagu);
-        const realisasi = Math.max(0, updated.realisasi);
-        const pct = pagu > 0 ? (realisasi / pagu) * 100 : 0;
-        const status: RealizationStatus =
-          realisasi === 0 ? 'Belum Terealisasi' : pct < 70 ? 'Perlu Perhatian' : 'Baik';
+  const handleSubmitInputRealisasi = async (
+    payload: RealisasiInputPayload
+  ): Promise<RealisasiSubmitResult> => {
+    const targetItem = subkegiatanList.find((s) => s.id === payload.subId);
+    if (!targetItem) {
+      return { syncedToSheet: false, errorMessage: 'Subkegiatan tidak ditemukan.' };
+    }
+
+    let diff = 0;
+    const updatedList = subkegiatanList.map((item) => {
+      if (item.id !== payload.subId) return item;
+      const boundedRealisasi = Math.min(item.pagu, Math.max(0, payload.newRealisasi));
+      diff = boundedRealisasi - item.realisasi;
+      const pct = item.pagu > 0 ? (boundedRealisasi / item.pagu) * 100 : 0;
+      const nextStatus: RealizationStatus =
+        boundedRealisasi === 0
+          ? 'Belum Terealisasi'
+          : pct < 70
+          ? 'Perlu Perhatian'
+          : 'Baik';
+      return {
+        ...item,
+        triwulan: payload.triwulan,
+        realisasi: boundedRealisasi,
+        persentase: pct,
+        status: nextStatus,
+        tindakLanjut: payload.tindakLanjut || item.tindakLanjut,
+      };
+    });
+
+    setSubkegiatanList(updatedList);
+    persistLiveRows(updatedList);
+    setIsSpreadsheetMode(true);
+    if (diff !== 0 && !isSpreadsheetMode) {
+      setRealisasiDelta((d) => d + diff);
+    }
+    isDirtyForRemoteRef.current = true;
+    addAuditLog('Input Realisasi SP2D', payload.nomorSp2d, payload.newRealisasi);
+
+    // Immediately write the updated dataset to the connected Google Sheets tab
+    if (accessToken && connectedSheet && selectedSheetTab) {
+      try {
+        setIsSyncingNow(true);
+        await syncSubkegiatanToSheet(
+          connectedSheet.spreadsheetId,
+          selectedSheetTab,
+          updatedList,
+          accessToken
+        );
+        isDirtyForRemoteRef.current = false;
+        lastRemoteSignatureRef.current = serializeRowsSignature(updatedList);
+        setLastSyncedAt(formatNowTime());
         return {
-          ...updated,
-          pagu,
-          realisasi,
-          persentase: pct,
-          status,
+          syncedToSheet: true,
+          sheetTitle: connectedSheet.title,
+          tabName: selectedSheetTab,
         };
-      });
-      persistLiveRows(next);
-      return next;
-    });
-    setIsSpreadsheetMode(true);
-    isDirtyForRemoteRef.current = true;
-  };
+      } catch (err: any) {
+        return {
+          syncedToSheet: false,
+          errorMessage: err?.message || 'Gagal menulis ke Google Sheets.',
+        };
+      } finally {
+        setIsSyncingNow(false);
+      }
+    }
 
-  const handleAddSpreadsheetRow = () => {
-    const newRow: SubkegiatanItem = {
-      id: `live-row-${Date.now()}`,
-      kode: `5.01.01.2.01.${String(subkegiatanList.length + 1).padStart(4, '0')}`,
-      program: 'Pembangunan',
-      kegiatan: 'Kegiatan Perencanaan Pembangunan Daerah',
-      nama: 'Subkegiatan Baru',
-      triwulan: 'IV',
-      pagu: 0,
-      realisasi: 0,
-      persentase: 0,
-      status: 'Belum Terealisasi',
-      unitPelaksana: activeSpjDoc?.metadata.perangkatDaerah || 'Bapperida Kab. Nagekeo',
-      tindakLanjut: '',
-    };
-    setSubkegiatanList((prev) => {
-      const next = [newRow, ...prev];
-      persistLiveRows(next);
-      return next;
-    });
-    setIsSpreadsheetMode(true);
-    isDirtyForRemoteRef.current = true;
-    addAuditLog('Verifikasi Triwulan', 'Menambahkan baris subkegiatan baru pada Spreadsheet 2 Arah.');
-  };
-
-  const handleDeleteSpreadsheetRow = (subId: string) => {
-    setSubkegiatanList((prev) => {
-      const next = prev.filter((r) => r.id !== subId);
-      persistLiveRows(next);
-      return next;
-    });
-    isDirtyForRemoteRef.current = true;
+    return { syncedToSheet: false };
   };
 
   const handleImportRowsFromSheet = (
@@ -751,21 +766,19 @@ export default function App() {
             />
           )}
 
-          {activeSection === 'spreadsheet' && (
-            <SpreadsheetView
+          {activeSection === 'input-realisasi' && (
+            <InputRealisasiView
               dataset={activeDataset}
               subkegiatanList={subkegiatanList}
-              onUpdateRow={handleUpdateSpreadsheetRow}
-              onAddRow={handleAddSpreadsheetRow}
-              onDeleteRow={handleDeleteSpreadsheetRow}
-              onResetDefaultDatabase={() => loadDefaultDatabaseSpreadsheet(true)}
-              onOpenSheetsModal={() => setSheetsModalOpen(true)}
               connectedSheet={connectedSheet}
               selectedSheetTab={selectedSheetTab}
+              isGoogleConnected={Boolean(accessToken && !needsAuth)}
               autoSyncEnabled={autoSyncEnabled}
               isSyncingNow={isSyncingNow}
               lastSyncedAt={lastSyncedAt}
+              onSubmitRealisasi={handleSubmitInputRealisasi}
               onManualTwoWaySync={handleManualTwoWaySync}
+              onOpenSheetsModal={() => setSheetsModalOpen(true)}
             />
           )}
 
@@ -825,7 +838,7 @@ export default function App() {
           }
         }}
         onManualTwoWaySync={handleManualTwoWaySync}
-        onOpenInlineSpreadsheet={() => setActiveSection('spreadsheet')}
+        onOpenInputRealisasi={() => setActiveSection('input-realisasi')}
         onChangeConnectedSheet={(meta, tab) => {
           setConnectedSheet(meta);
           setSelectedSheetTab(tab);

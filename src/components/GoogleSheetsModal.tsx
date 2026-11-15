@@ -90,7 +90,7 @@ interface GoogleSheetsModalProps {
   lastSyncedAt: string | null;
   onToggleAutoSync: (enabled: boolean) => void;
   onManualTwoWaySync: () => Promise<void>;
-  onOpenInlineSpreadsheet: () => void;
+  onOpenInputRealisasi: () => void;
   onChangeConnectedSheet: (meta: SpreadsheetMetadata | null, tab: string) => void;
   onImportRows: (
     rows: SubkegiatanItem[],
@@ -123,7 +123,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   lastSyncedAt,
   onToggleAutoSync,
   onManualTwoWaySync,
-  onOpenInlineSpreadsheet,
+  onOpenInputRealisasi,
   onChangeConnectedSheet,
   onImportRows,
   onResetDefaultDatabase,
@@ -219,7 +219,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     if (!previewRows || !connectedSheet) return;
     onImportRows(previewRows, connectedSheet, selectedTab, previewSpjDoc);
     setSuccessMsg(
-      `${previewRows.length} data subkegiatan dari "${connectedSheet.title}" (${selectedTab}) telah diterapkan ke Dashboard & Spreadsheet 2 Arah.`
+      `${previewRows.length} data subkegiatan dari "${connectedSheet.title}" (${selectedTab}) telah diterapkan ke Dashboard & menu Input Realisasi.`
     );
     setPreviewRows(null);
     setPreviewSpjDoc(undefined);
@@ -232,7 +232,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     try {
       await onResetDefaultDatabase();
       setSuccessMsg(
-        'Database SIPANGGAR bawaan (61 Subkegiatan) dimuat ulang ke Dashboard & Spreadsheet 2 Arah.'
+        'Database SIPANGGAR bawaan (61 Subkegiatan) dimuat ulang ke Dashboard & siap disinkronkan.'
       );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Gagal memuat ulang Database SIPANGGAR.');
@@ -341,19 +341,19 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
         {/* Body */}
         <div className="p-5 overflow-y-auto space-y-4 text-[13px]">
-          {/* Built-in Two-Way Spreadsheet Editor Card (Zero File Uploads) */}
+          {/* Active Database & Input Realisasi Banner */}
           <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2.5">
                 <Database className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
                 <div>
                   <div className="font-bold text-[#0E264D]">
-                    Spreadsheet Langsung 2 Arah (Tanpa Unggah File)
+                    Database SIPANGGAR & Input Realisasi Terhubung
                   </div>
                   <div className="text-[12px] text-slate-600 mt-0.5">
                     {activeSpjMetadata
                       ? `${activeSpjMetadata.perangkatDaerah} · PA: ${activeSpjMetadata.penggunaAnggaran}`
-                      : `Data ${subkegiatanList.length} Subkegiatan langsung terhubung 2 arah dengan seluruh grafik & laporan Dashboard.`}
+                      : `Setiap input realisasi di sistem otomatis diperbarui di Dashboard dan disinkronkan ke Google Sheets.`}
                   </div>
                 </div>
               </div>
@@ -363,12 +363,12 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   type="button"
                   onClick={() => {
                     onClose();
-                    onOpenInlineSpreadsheet();
+                    onOpenInputRealisasi();
                   }}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-bold cursor-pointer"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>Buka Spreadsheet 2 Arah</span>
+                  <span>Buka Input Realisasi</span>
                 </button>
                 <button
                   type="button"

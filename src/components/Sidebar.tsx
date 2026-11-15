@@ -1,8 +1,8 @@
 import React from 'react';
 import {
   AlertTriangle,
+  ClipboardEdit,
   Database,
-  FileSpreadsheet,
   FileText,
   History,
   Home,
@@ -27,7 +27,7 @@ const NAV_ITEMS: {
 }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Home },
   { id: 'data-anggaran', label: 'Data Anggaran', icon: Database },
-  { id: 'spreadsheet', label: 'Spreadsheet 2 Arah', icon: FileSpreadsheet },
+  { id: 'input-realisasi', label: 'Input Realisasi', icon: ClipboardEdit },
   { id: 'monitoring', label: 'Monitoring Realisasi', icon: TrendingUp },
   { id: 'peringatan', label: 'Peringatan Realisasi', icon: AlertTriangle },
   { id: 'laporan', label: 'Laporan', icon: FileText },

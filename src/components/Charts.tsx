@@ -19,7 +19,25 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
   onSelectQuarter,
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-  const yTicks = [100, 75, 50, 25, 0];
+
+  const maxDataValue = Math.max(
+    ...data.flatMap((d) => [d.anggaranMiliar, d.realisasiMiliar]),
+    0.1
+  );
+
+  const yTicks = React.useMemo(() => {
+    if (maxDataValue <= 1.6) return [1.6, 1.2, 0.8, 0.4, 0];
+    if (maxDataValue <= 2.0) return [2, 1.5, 1, 0.5, 0];
+    if (maxDataValue <= 4.0) return [4, 3, 2, 1, 0];
+    if (maxDataValue <= 10) return [10, 7.5, 5, 2.5, 0];
+    if (maxDataValue <= 40) return [40, 30, 20, 10, 0];
+    return [100, 75, 50, 25, 0];
+  }, [maxDataValue]);
+
+  const maxTick = yTicks[0] || 100;
+
+  const formatTick = (tick: number) =>
+    Number.isInteger(tick) ? String(tick) : tick.toFixed(1).replace('.', ',');
 
   const getBadgeStyle = (pct: number) => {
     if (pct >= 78) {
@@ -48,7 +66,7 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
             <div className="w-8 flex flex-col justify-between items-end pr-2 py-0.5 text-[11.5px] font-semibold text-slate-600 tabular-nums shrink-0">
               {yTicks.map((t) => (
                 <span key={t} className="leading-none">
-                  {t}
+                  {formatTick(t)}
                 </span>
               ))}
             </div>
@@ -80,8 +98,14 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
               {/* Bars */}
               <div className="relative z-10 h-full grid grid-cols-4 items-end px-2 sm:px-4 gap-2">
                 {data.map((q, idx) => {
-                  const anggaranH = Math.min(100, Math.max(4, q.anggaranMiliar));
-                  const realisasiH = Math.min(100, Math.max(4, q.realisasiMiliar));
+                  const anggaranPct =
+                    maxTick > 0
+                      ? Math.min(82, Math.max(6, (q.anggaranMiliar / maxTick) * 82))
+                      : 6;
+                  const realisasiPct =
+                    maxTick > 0
+                      ? Math.min(82, Math.max(6, (q.realisasiMiliar / maxTick) * 82))
+                      : 6;
                   const isSelected = selectedQuarter === q.id;
                   const isHovered = hoveredIdx === idx;
 
@@ -121,7 +145,7 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
 
                       {/* Floating % Pill */}
                       <div
-                        className={`mb-auto mt-3 sm:mt-4 px-2 py-0.5 rounded-md border text-[11px] font-bold tabular-nums shadow-2xs transition-transform duration-150 group-hover:scale-105 ${getBadgeStyle(
+                        className={`mb-auto mt-2 sm:mt-3 px-2 py-0.5 rounded-md border text-[11px] font-bold tabular-nums shadow-2xs transition-transform duration-150 group-hover:scale-105 ${getBadgeStyle(
                           q.persentase
                         )}`}
                       >
@@ -129,7 +153,7 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
                       </div>
 
                       {/* Two Bars side-by-side */}
-                      <div className="w-full flex items-end justify-center gap-1.5 sm:gap-2 h-[64%]">
+                      <div className="w-full flex items-end justify-center gap-1.5 sm:gap-2 h-[72%]">
                         {/* Anggaran Bar */}
                         <div className="flex flex-col items-center justify-end h-full w-6 sm:w-8">
                           <span className="text-[11px] font-bold text-[#0E264D] tabular-nums mb-1 leading-none">
@@ -138,7 +162,7 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
                           <div
                             className="w-full rounded-t-[5px] transition-all duration-300"
                             style={{
-                              height: `${anggaranH * 1.48}%`,
+                              height: `${anggaranPct}%`,
                               background: 'linear-gradient(180deg, #1683FF 0%, #0D67D8 100%)',
                             }}
                           />
@@ -152,7 +176,7 @@ export const QuarterlyBarChart: React.FC<QuarterlyBarChartProps> = ({
                           <div
                             className="w-full rounded-t-[5px] transition-all duration-300"
                             style={{
-                              height: `${realisasiH * 1.48}%`,
+                              height: `${realisasiPct}%`,
                               background: 'linear-gradient(180deg, #1FB655 0%, #158E3F 100%)',
                             }}
                           />
@@ -219,11 +243,11 @@ export const ProgramDonutChart: React.FC<ProgramDonutChartProps> = ({
   // Build SVG arc segments starting at top (-90deg)
   let cumulativeFraction = 0;
   const segments = programs.map((p) => {
-    const fraction = totalPagu > 0 ? p.pagu / totalPagu : 0.25;
-    const gap = 0.012;
-    const dashLength = Math.max(0, (fraction - gap) * circumference);
+    const rawFraction = totalPagu > 0 ? p.pagu / totalPagu : 0.25;
+    const gap = Math.min(0.01, rawFraction * 0.25);
+    const dashLength = rawFraction > 0 ? Math.max(4, (rawFraction - gap) * circumference) : 0;
     const dashOffset = -cumulativeFraction * circumference;
-    cumulativeFraction += fraction;
+    cumulativeFraction += rawFraction;
     return {
       ...p,
       dashLength,

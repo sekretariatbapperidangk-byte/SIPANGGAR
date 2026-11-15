@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, ChevronDown, Menu, TrendingUp } from 'lucide-react';
+import { Calendar, ChevronDown, FileSpreadsheet, Menu, TrendingUp } from 'lucide-react';
 import { QuarterId } from '../types/budget';
 import { QUARTER_OPTIONS } from '../data/sipanggarData';
 import { PimpinanAvatar } from './BrandAssets';
@@ -12,6 +12,10 @@ interface TopBarProps {
   userRole: string;
   onChangeRole: (role: string) => void;
   onOpenMobileMenu: () => void;
+  onOpenSheetsModal: () => void;
+  connectedSheetTitle: string | null;
+  activeSourceLabel: string;
+  perangkatDaerahSubtitle?: string;
 }
 
 const AVAILABLE_YEARS = [2026, 2025, 2024];
@@ -25,7 +29,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   userRole,
   onChangeRole,
   onOpenMobileMenu,
+  onOpenSheetsModal,
+  connectedSheetTitle,
+  activeSourceLabel,
+  perangkatDaerahSubtitle,
 }) => {
+  const spreadsheetDisplay = connectedSheetTitle || activeSourceLabel;
+
   return (
     <header className="w-full pt-4 pb-3 px-4 sm:px-6 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 no-print">
       {/* Left Brand Welcome Title */}
@@ -52,13 +62,27 @@ export const TopBar: React.FC<TopBarProps> = ({
             Dashboard Pemantauan Anggaran dan Realisasi Keuangan
           </p>
           <p className="text-[11.5px] text-slate-500 font-medium leading-snug truncate">
-            Badan Perencanaan Pembangunan, Riset dan Inovasi Daerah Kabupaten Nagekeo
+            {perangkatDaerahSubtitle ||
+              'Badan Perencanaan Pembangunan, Riset dan Inovasi Daerah Kabupaten Nagekeo'}
           </p>
         </div>
       </div>
 
-      {/* Right Interactive Selectors: Tahun Anggaran, Periode, User Role */}
+      {/* Right Interactive Selectors: Spreadsheet, Tahun Anggaran, Periode, User Role */}
       <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+        {/* Google Sheets / Spreadsheet Sync Trigger */}
+        <button
+          type="button"
+          onClick={onOpenSheetsModal}
+          className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0 bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+          title={`Sumber data spreadsheet aktif: ${spreadsheetDisplay}`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="text-[13px] font-bold max-w-[175px] truncate">
+            {spreadsheetDisplay}
+          </span>
+        </button>
+
         {/* Tahun Anggaran Selector */}
         <div className="relative flex items-center gap-2.5 bg-white border border-slate-200/90 rounded-xl px-3.5 py-2 shadow-xs hover:border-blue-300 transition-colors">
           <Calendar className="w-4 h-4 text-[#0E264D] shrink-0" />

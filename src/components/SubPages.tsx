@@ -25,11 +25,16 @@ import {
   formatRupiah,
 } from '../data/sipanggarData';
 
+import { ParsedSpjDocument } from '../services/spjParser';
+
 interface DataAnggaranViewProps {
   dataset: FiscalYearDataset;
   subkegiatanList: SubkegiatanItem[];
   initialStatusFilter: RealizationStatus | 'Semua';
   onUpdateRealisasi: (subId: string, newRealisasi: number, keterangan: string) => void;
+  onOpenSheetsModal: () => void;
+  connectedSheetTitle: string | null;
+  activeSourceLabel: string;
 }
 
 export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
@@ -37,6 +42,9 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
   subkegiatanList,
   initialStatusFilter,
   onUpdateRealisasi,
+  onOpenSheetsModal,
+  connectedSheetTitle,
+  activeSourceLabel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [programFilter, setProgramFilter] = useState<ProgramCategory>('Semua Program');
@@ -88,6 +96,15 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenSheetsModal}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border transition-colors cursor-pointer whitespace-nowrap bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+            >
+              <span>
+                {connectedSheetTitle ? `Sheets: ${connectedSheetTitle}` : `Sumber: ${activeSourceLabel}`}
+              </span>
+            </button>
             {(['Semua', 'Baik', 'Perlu Perhatian', 'Belum Terealisasi'] as const).map((st) => (
               <button
                 key={st}
@@ -134,9 +151,9 @@ export const DataAnggaranView: React.FC<DataAnggaranViewProps> = ({
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <div className="overflow-x-auto max-h-[540px] overflow-y-auto rounded-xl border border-slate-200">
           <table className="w-full text-left border-collapse text-[12.5px]">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="bg-[#EEF3FA] text-[#0E264D] font-bold">
                 <th className="py-2.5 px-3">Kode</th>
                 <th className="py-2.5 px-3">Subkegiatan & Kegiatan</th>
@@ -590,7 +607,8 @@ export const PeringatanRealisasiView: React.FC<PeringatanRealisasiViewProps> = (
 export const LaporanView: React.FC<{
   dataset: FiscalYearDataset;
   subkegiatanList: SubkegiatanItem[];
-}> = ({ dataset, subkegiatanList }) => {
+  spjDocument?: ParsedSpjDocument | null;
+}> = ({ dataset, subkegiatanList, spjDocument }) => {
   const handleDownloadCSV = () => {
     const headers = [
       'Kode Rekening',
@@ -733,6 +751,46 @@ export const LaporanView: React.FC<{
               ))}
             </tbody>
           </table>
+
+          {spjDocument && (
+            <>
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                  <div className="text-[11px] font-semibold text-slate-500">SPJ LS-Gaji s.d. Saat Ini</div>
+                  <div className="text-[13.5px] font-extrabold text-[#0E264D] tabular-nums mt-0.5">
+                    {formatRupiah(spjDocument.spjBreakdown.lsGaji)}
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                  <div className="text-[11px] font-semibold text-slate-500">SPJ LS Barang & Jasa</div>
+                  <div className="text-[13.5px] font-extrabold text-[#0E264D] tabular-nums mt-0.5">
+                    {formatRupiah(spjDocument.spjBreakdown.lsBarangJasa)}
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                  <div className="text-[11px] font-semibold text-slate-500">SPJ UP / GU / TU</div>
+                  <div className="text-[13.5px] font-extrabold text-[#0E264D] tabular-nums mt-0.5">
+                    {formatRupiah(spjDocument.spjBreakdown.upGuTu)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-6 text-[12px] text-[#0E264D] pt-4 border-t border-slate-200">
+                <div>
+                  <div className="text-slate-500">Pengguna Anggaran</div>
+                  <div className="font-extrabold mt-8 underline">
+                    {spjDocument.metadata.penggunaAnggaran}
+                  </div>
+                </div>
+                <div className="sm:text-right">
+                  <div className="text-slate-500">Bendahara Pengeluaran</div>
+                  <div className="font-extrabold mt-8 underline">
+                    {spjDocument.metadata.bendaharaPengeluaran}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

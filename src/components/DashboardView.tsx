@@ -97,7 +97,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const activeQuarterMeta = QUARTER_OPTIONS.find((q) => q.id === selectedQuarter) ?? QUARTER_OPTIONS[3];
   const unrealizedCount =
-    dataset.year === 2026 ? Math.max(unrealizedSubkegiatan.length, dataset.statusCounts.belumTerealisasi) : dataset.statusCounts.belumTerealisasi;
+    dataset.year === 2026 ? unrealizedSubkegiatan.length : dataset.statusCounts.belumTerealisasi;
 
   return (
     <div className="space-y-4 pb-6">
@@ -377,9 +377,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-slate-200/80 flex-1">
+          <div className="overflow-x-auto max-h-[325px] overflow-y-auto rounded-xl border border-slate-200/80 flex-1">
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-10">
                 <tr className="bg-[#EEF3FA] text-[#0E264D] text-[12px] font-bold">
                   <th className="py-2.5 px-3">Kegiatan</th>
                   <th className="py-2.5 px-2.5 text-right whitespace-nowrap">Pagu (Rp)</th>
@@ -411,6 +411,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {keg.status === 'Baik' ? (
                         <span className="inline-block px-3 py-1 rounded-md bg-[#DCFCE7] text-[#15803D] text-[11.5px] font-bold">
                           Baik
+                        </span>
+                      ) : keg.status === 'Belum Terealisasi' ? (
+                        <span className="inline-block px-2.5 py-1 rounded-md bg-[#FEE2E2] text-[#DC2626] text-[11.5px] font-bold">
+                          Belum Terealisasi
                         </span>
                       ) : (
                         <span className="inline-block px-2.5 py-1 rounded-md bg-[#FEF3C7] text-[#B45309] text-[11.5px] font-bold">

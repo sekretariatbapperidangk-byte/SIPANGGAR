@@ -1,0 +1,6 @@
+{
+  "name": "SIPANGGAR - Bapperida Kab. Nagekeo",
+  "description": "Sistem Informasi Pemantauan Anggaran dan Realisasi Keuangan Tahun Berjalan Bapperida Kabupaten Nagekeo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

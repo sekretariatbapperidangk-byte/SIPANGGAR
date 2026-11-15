@@ -69,7 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        <NagekeoCrest className="w-11 h-13 mb-2 drop-shadow-md" />
+        <NagekeoCrest className="w-14 h-16 mb-2 drop-shadow-md" />
         <h1 className="text-[22px] font-extrabold tracking-tight text-white leading-none">
           SIPANGGAR
         </h1>

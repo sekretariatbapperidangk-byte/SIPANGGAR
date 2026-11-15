@@ -129,7 +129,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         >
           <div className="space-y-5">
             <div className="flex items-center gap-3">
-              <NagekeoCrest className="w-12 h-14 drop-shadow-md shrink-0" />
+              <NagekeoCrest className="w-14 h-16 drop-shadow-md shrink-0" />
               <div>
                 <h1 className="text-[24px] font-extrabold tracking-tight leading-none">
                   SIPANGGAR
@@ -178,8 +178,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </div>
           </div>
 
-          <div className="pt-6 text-[11px] text-blue-200/75">
-            Nagekeo Maju Bersama · Pemantauan Realisasi SP2D Terintegrasi
+          <div className="pt-6 text-[11px] text-blue-200/85 leading-snug italic">
+            Nagekeo Maju, Mandiri dan Berdaya Saing berlandaskan Iman dan Budaya
           </div>
         </div>
 
